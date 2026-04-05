@@ -1,0 +1,10 @@
+[package]
+name = "ecs"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+rustc-hash = "2.1.2"
+parking_lot = "0.12.5"
+ecs_macros = { path = "ecs_macros" }
+blobvec = { git = "https://github.com/yogevh022/blobvec" }
