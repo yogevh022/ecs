@@ -1,8 +1,8 @@
-use crate::component::Component;
 pub use ecs_macros::Component;
 
 pub mod component;
 mod world;
+mod archetype;
 
 #[derive(Component, Debug)]
 struct CompA;
@@ -26,16 +26,22 @@ pub fn test() {
 
     println!("keys:\nkey_a: {:?}\nkey_b: {:?}", key_a, key_b);
 
-    // println!("");
+    let mut world = world::Ecs::new();
 
-    // let mut world = world::Ecs::new();
-    //
-    // let ent_1 = world.spawn();
-    // let ent_2 = world.spawn();
-    // let ent_3 = world.spawn();
-    //
-    // println!("ent_1: {}, ent_2: {}, ent_3: {}", ent_1, ent_2, ent_3);
-    //
+    let ent_1 = world.spawn();
+    let ent_2 = world.spawn();
+    let ent_3 = world.spawn();
+
+    println!("ent_1: {}, ent_2: {}, ent_3: {}", ent_1, ent_2, ent_3);
+
+    world.debug();
+
+    world.add_component(ent_1, CompA);
+    world.add_component(ent_1, CompB);
+    // world.add_component(ent_1, CompC);
+
+    world.debug();
+
     // let mut arch = Archetype::new();
     // arch.add_column::<CompA>();
     // arch.add_column::<CompB>();

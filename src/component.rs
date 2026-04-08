@@ -1,93 +1,32 @@
+use crate::world::Entity;
 use blobvec::BlobVec;
 use parking_lot::{RwLock, RwLockReadGuard};
 use rustc_hash::FxHashMap;
-use std::any::{TypeId, type_name};
+use std::any::{Any, TypeId, type_name};
 use std::fmt::Debug;
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 
-pub(crate) const ARCHETYPE_KEY_WORD_BITS: usize = usize::BITS as usize;
-pub(crate) const ARCHETYPE_KEY_WORDS: usize = 4;
+pub(crate) const ARCHETYPE_KEY_WORD_BITS: u32 = usize::BITS;
+pub(crate) const ARCHETYPE_KEY_WORDS: u32 = 4;
 pub(crate) static COMPONENT_REGISTRY: OnceLock<RwLock<ComponentRegistry>> = OnceLock::new();
 
-pub type ComponentId = usize;
+pub type ComponentId = u32;
 
 pub trait Component: Sized + 'static {
     fn component_id() -> ComponentId;
 }
 
-#[derive(PartialEq, Eq, Hash)]
-pub struct ArchetypeKey(pub(crate) [usize; ARCHETYPE_KEY_WORDS]);
-impl ArchetypeKey {
-    pub const EMPTY: ArchetypeKey = ArchetypeKey([0; ARCHETYPE_KEY_WORDS]);
-}
-
-impl Debug for ArchetypeKey {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "ArchKey<")?;
-        for (i, word) in self.0.iter().enumerate() {
-            if i > 0 {
-                write!(f, ", ")?;
-            }
-            write!(f, "{}", word)?;
-        }
-        write!(f, ">")
-    }
-}
-
-pub struct Archetype {
-    components: Vec<BlobVec>,
-    component_ids: Vec<ComponentId>,
-}
-
-impl Archetype {
-    pub fn new() -> Self {
-        Self {
-            components: Vec::new(),
-            component_ids: Vec::new(),
-        }
-    }
-
-    // --- accessors ---
-    pub fn get_column<T: Component>(&self) -> &BlobVec {
-        match self.get_column_index::<T>() {
-            Some(col_idx) => &self.components[col_idx],
-            None => panic!("Component {} not found in archetype", type_name::<T>()),
-        }
-    }
-
-    pub fn get_column_mut<T: Component>(&mut self) -> &mut BlobVec {
-        match self.get_column_index::<T>() {
-            Some(col_idx) => &mut self.components[col_idx],
-            None => panic!("Component {} not found in archetype", type_name::<T>()),
-        }
-    }
-
-    // --- insertion ---
-    pub(crate) fn add_column<T: Component>(&mut self) {
-        let column = BlobVec::new::<T>();
-        self.components.push(column);
-        self.component_ids.push(T::component_id());
-    }
-
-    // --- private ---
-    #[inline]
-    fn get_column_index<T: Component>(&self) -> Option<usize> {
-        let comp_id = T::component_id();
-        self.component_ids.iter().position(|id| *id == comp_id)
-    }
-}
-
 pub struct ComponentRegistry {
-    registry: FxHashMap<TypeId, usize>,
-    id_counter: AtomicUsize,
+    registry: FxHashMap<TypeId, ComponentId>,
+    id_counter: u32,
     built: bool,
 }
 
 impl ComponentRegistry {
     pub fn new() -> Self {
         Self {
-            id_counter: AtomicUsize::new(1),
+            id_counter: 1,
             registry: FxHashMap::default(),
             built: false,
         }
@@ -104,20 +43,26 @@ impl ComponentRegistry {
             "Attempted to register component after building component registry!"
         );
         let type_id = TypeId::of::<T>();
-        if let Some(id) = self.registry.get(&type_id) {
+        let id = self.next_id();
+        let None = self.registry.insert(type_id, id) else {
             panic!(
                 "Attempted to register component twice: {:?} (component_id: {:?}, type_id: {:?})",
                 type_name::<T>(),
                 id,
                 type_id
             );
-        }
-        let id = self.id_counter.fetch_add(1, Ordering::Relaxed);
-        self.registry.insert(type_id, id);
+        };
     }
 
     pub(crate) fn component_id_of<T: Component>(&self) -> ComponentId {
         self.registry[&TypeId::of::<T>()]
+    }
+
+    // --- private ---
+    fn next_id(&mut self) -> ComponentId {
+        let id = self.id_counter;
+        self.id_counter += 1;
+        id
     }
 }
 
@@ -137,13 +82,8 @@ pub fn registry<'a>() -> RwLockReadGuard<'a, ComponentRegistry> {
 macro_rules! archetype_key {
     ($($T:ident),+) => {
         {
-            let mut key = $crate::component::ArchetypeKey::EMPTY;
-            $(
-                let component_bit = $T::component_id() - 1;
-                let bit = component_bit % $crate::component::ARCHETYPE_KEY_WORD_BITS;
-                let word = component_bit / $crate::component::ARCHETYPE_KEY_WORDS;
-                key.0[word] |= 1 << bit;
-            )+
+            let mut key = $crate::archetype::ArchetypeKey::EMPTY;
+            $(key = key.with::<$T>();)+
             key
         }
     };

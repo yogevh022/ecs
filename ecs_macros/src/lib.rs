@@ -15,5 +15,6 @@ pub fn derive_component(input: TokenStream) -> TokenStream {
                 *ID.get_or_init(|| crate::component::registry().component_id_of::<Self>())
             }
         }
-    }.into()
+    }
+    .into()
 }
