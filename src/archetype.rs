@@ -20,6 +20,15 @@ impl ArchetypeKey {
         self.0[word as usize] |= 1 << bit;
         self
     }
+
+    #[inline]
+    pub fn without<T: Component>(mut self) -> Self {
+        let component_bit = T::component_id() - 1;
+        let bit = component_bit % ARCHETYPE_KEY_WORD_BITS;
+        let word = component_bit / ARCHETYPE_KEY_WORD_BITS;
+        self.0[word as usize] &= !(1 << bit);
+        self
+    }
 }
 
 impl Debug for ArchetypeKey {
@@ -35,7 +44,6 @@ impl Debug for ArchetypeKey {
     }
 }
 
-#[derive(Debug)]
 pub struct Archetype {
     components: Vec<BlobVec>,
     component_ids: Vec<ComponentId>,
@@ -128,14 +136,42 @@ impl Archetype {
         self.component_ids.push(T::component_id());
     }
 
-    /// swap-remove a row from this archetype and insert it into another.
-    /// the other archetype must contain at least all components from this archetype.
-    /// if an entity was swapped, returns its id, otherwise returns None
-    pub(crate) fn move_row_into(&mut self, row: usize, dst: &mut Self) -> Option<EntityId> {
+    pub(crate) fn push_entity_id(&mut self, entity: EntityId) {
+        self.entity_ids.push(entity);
+    }
+
+    // --- removal ---
+    pub(crate) fn remove_column<T: Component>(&mut self) {
+        debug_assert!(
+            self.get_column_index::<T>().is_some(),
+            "Component {} does not exist in archetype",
+            type_name::<T>()
+        );
+        let idx = self.get_column_index::<T>().unwrap();
+        self.components.swap_remove(idx);
+        self.component_ids.swap_remove(idx);
+    }
+
+    /// Swap-removes a row from this archetype and moves it into `dst`.
+    ///
+    /// `skip_comp_id` should be `None` when `dst` has all the same components as `self`,
+    /// or `Some(id)` when `dst` is missing exactly one component, to skip copying it.
+    ///
+    /// Returns the id of the entity that was swapped into `row` to fill the gap, or `None`
+    /// if the removed row was the last one.
+    pub(crate) fn move_row_into(
+        &mut self,
+        row: usize,
+        dst: &mut Self,
+        skip_comp_id: Option<ComponentId>,
+    ) -> Option<EntityId> {
         if dst.rows_len() >= dst.rows_capacity() {
             dst.grow_rows();
         }
         for (comp_id, column) in self.iter_columns_mut() {
+            if skip_comp_id == Some(comp_id) {
+                continue;
+            }
             let dst_column = dst.get_column_by_id_mut(comp_id);
             unsafe {
                 let ptr = dst_column.push_uninit_unchecked();
@@ -146,6 +182,8 @@ impl Archetype {
         dst.entity_ids.push(entity);
         self.entity_ids.get(row).copied()
     }
+
+    // --- access ---
 
     pub(crate) fn iter_columns(&self) -> impl Iterator<Item = (ComponentId, &BlobVec)> {
         self.component_ids
@@ -161,10 +199,6 @@ impl Archetype {
             .zip(self.components.iter_mut())
     }
 
-    pub(crate) fn push_entity_id(&mut self, entity: EntityId) {
-        self.entity_ids.push(entity);
-    }
-
     // --- private ---
     #[inline]
     fn get_column_index<T: Component>(&self) -> Option<usize> {
@@ -175,6 +209,28 @@ impl Archetype {
     #[inline]
     fn get_column_index_by_id(&self, comp_id: ComponentId) -> Option<usize> {
         self.component_ids.iter().position(|id| *id == comp_id)
+    }
+}
+
+impl Debug for Archetype {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Archetype {{\n")?;
+        write!(f, "    components: [")?;
+        for (i, comp_name) in self.components.iter().map(|c| c.type_name()).enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{:?}", comp_name)?;
+        }
+        write!(f, "],\n")?;
+        write!(f, "    entity_ids: [")?;
+        for (i, entity) in self.entity_ids.iter().enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{}", entity)?;
+        }
+        write!(f, "]\n}}")
     }
 }
 
@@ -196,9 +252,7 @@ impl ArchetypeRegistry {
     }
 
     pub fn debug(&self) {
-        dbg!(&self.registry);
         dbg!(&self.dense);
-        dbg!(&self.dense_keys);
     }
 
     pub(crate) fn get_by_id(&self, id: ArchetypeId) -> Option<&Archetype> {
@@ -209,7 +263,11 @@ impl ArchetypeRegistry {
         self.dense.get_mut(id)
     }
 
-    pub(crate) unsafe fn get_two_by_ids_mut(&mut self, id1: ArchetypeId, id2: ArchetypeId) -> [&mut Archetype; 2] {
+    pub(crate) unsafe fn get_two_by_ids_mut(
+        &mut self,
+        id1: ArchetypeId,
+        id2: ArchetypeId,
+    ) -> [&mut Archetype; 2] {
         unsafe { self.dense.get_disjoint_unchecked_mut([id1, id2]) }
     }
 

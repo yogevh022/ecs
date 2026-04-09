@@ -1,11 +1,11 @@
 use crate::archetype::{Archetype, ArchetypeId, ArchetypeRegistry};
 use crate::component::Component;
 use std::any::type_name;
-use std::fmt::Display;
+use std::fmt::{Debug, Display};
 
 pub type EntityId = u32;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct Entity {
     pub id: EntityId,
     generation: u32,
@@ -14,6 +14,12 @@ pub struct Entity {
 impl Display for Entity {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Entity({})", self.id)
+    }
+}
+
+impl Debug for Entity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self)
     }
 }
 
@@ -122,7 +128,7 @@ impl Ecs {
 
     pub fn debug(&self) {
         dbg!(&self.entities);
-        dbg!(&self.entities_sparse);
+        // dbg!(&self.entities_sparse);
         self.archetypes.debug();
         // dbg!(&self.archetypes);
     }
@@ -173,15 +179,45 @@ impl Ecs {
         // forget the shallow copy of old_arch to avoid double free
         std::mem::forget(old_arch_shallow);
 
-        // SAFETY: both exist, confirmed above
-        let [old_arch, new_arch] = unsafe { self.archetypes.get_two_by_ids_mut(old_id, new_id) };
+        let entity_new_row = unsafe {
+            // SAFETY: both old_id and new_id archetypes exist, confirmed above
+            self.migrate_columns_with::<T>(old_id, new_id, old_row, component)
+        };
 
-        let entity_new_row = new_arch.rows_len() as u32;
-        new_arch.get_column_mut::<T>().push(component);
-        if let Some(swapped_entity_id) = old_arch.move_row_into(old_row as usize, new_arch) {
-            // SAFETY: if swapped_entity is Some, it must be a valid sparse entity index
-            unsafe { self.get_sparse_slot_unchecked_mut(swapped_entity_id).row = old_row };
+        let sparse_entity = unsafe { self.get_sparse_slot_unchecked_mut(entity.id) };
+        sparse_entity.archetype_id = new_id;
+        sparse_entity.row = entity_new_row;
+    }
+
+    pub fn remove_component<T: Component>(&mut self, entity: Entity) {
+        let sparse_entity = self.get_sparse_entity(entity);
+        let old_id = sparse_entity.archetype_id;
+        let old_row = sparse_entity.row;
+        // SAFETY: every entity belongs to an archetype
+        let old_key = unsafe { *self.archetypes.key_of(old_id as _).unwrap_unchecked() };
+        let new_key = old_key.without::<T>();
+
+        if old_key == new_key {
+            panic!("{} does not have component {}", entity, type_name::<T>());
         }
+
+        let old_arch_shallow = unsafe {
+            // SAFETY: every entity belongs to an archetype
+            (self.archetypes.get_by_id_mut(old_id).unwrap_unchecked() as *mut Archetype).read()
+        };
+
+        let new_id = self.archetypes.id_of_or_register_with(new_key, || {
+            let mut new_arch = old_arch_shallow.clone_empty();
+            new_arch.remove_column::<T>();
+            new_arch
+        });
+        // forget the shallow copy of old_arch to avoid double free
+        std::mem::forget(old_arch_shallow);
+
+        let entity_new_row = unsafe {
+            // SAFETY: both old_id and new_id archetypes exist, confirmed above
+            self.migrate_columns_without::<T>(old_id, new_id, old_row)
+        };
 
         let sparse_entity = unsafe { self.get_sparse_slot_unchecked_mut(entity.id) };
         sparse_entity.archetype_id = new_id;
@@ -189,6 +225,42 @@ impl Ecs {
     }
 
     // --- private ---
+    unsafe fn migrate_columns_with<T: Component>(
+        &mut self,
+        src_id: ArchetypeId,
+        dst_id: ArchetypeId,
+        src_row: u32,
+        component: T,
+    ) -> u32 {
+        let [old_arch, new_arch] = unsafe { self.archetypes.get_two_by_ids_mut(src_id, dst_id) };
+
+        let entity_new_row = new_arch.rows_len() as u32;
+        new_arch.get_column_mut::<T>().push(component);
+        if let Some(swapped_entity_id) = old_arch.move_row_into(src_row as usize, new_arch, None) {
+            // SAFETY: if swapped_entity is Some, it must be a valid sparse entity index
+            unsafe { self.get_sparse_slot_unchecked_mut(swapped_entity_id).row = src_row };
+        }
+        entity_new_row
+    }
+
+    unsafe fn migrate_columns_without<T: Component>(
+        &mut self,
+        src_id: ArchetypeId,
+        dst_id: ArchetypeId,
+        src_row: u32,
+    ) -> u32 {
+        let [old_arch, new_arch] = unsafe { self.archetypes.get_two_by_ids_mut(src_id, dst_id) };
+
+        let entity_new_row = new_arch.rows_len() as u32;
+        if let Some(swapped_entity_id) =
+            old_arch.move_row_into(src_row as usize, new_arch, Some(T::component_id()))
+        {
+            // SAFETY: if swapped_entity is Some, it must be a valid sparse entity index
+            unsafe { self.get_sparse_slot_unchecked_mut(swapped_entity_id).row = src_row };
+        }
+        entity_new_row
+    }
+
     fn get_sparse_entity(&self, entity: Entity) -> SparseEntity {
         debug_assert!(
             entity.id < self.entities_sparse.len() as u32,

@@ -21,10 +21,8 @@ pub fn test() {
 
     component::build_registry();
 
-    let key_a = archetype_key!(CompA);
-    let key_b = archetype_key!(CompA, CompB, CompC);
-
-    println!("keys:\nkey_a: {:?}\nkey_b: {:?}", key_a, key_b);
+    // let key_a = archetype_key!(CompA);
+    // let key_b = archetype_key!(CompA, CompB, CompC);
 
     let mut world = world::Ecs::new();
 
@@ -32,13 +30,14 @@ pub fn test() {
     let ent_2 = world.spawn();
     let ent_3 = world.spawn();
 
-    println!("ent_1: {}, ent_2: {}, ent_3: {}", ent_1, ent_2, ent_3);
-
     world.debug();
 
-    world.add_component(ent_1, CompA);
-    world.add_component(ent_1, CompB);
-    // world.add_component(ent_1, CompC);
+    let ca = CompA;
+    let cb = CompB;
+
+    world.add_component(ent_1, ca);
+    world.add_component(ent_1, cb);
+    world.remove_component::<CompA>(ent_1);
 
     world.debug();
 
