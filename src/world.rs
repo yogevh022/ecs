@@ -1,6 +1,7 @@
-use crate::archetype::{Archetype, ArchetypeId, ArchetypeRegistry};
-use crate::component::Component;
-use std::any::type_name;
+use crate::archetype::{Archetype, ArchetypeId, ArchetypeKey, ArchetypeRegistry};
+use crate::component;
+use crate::component::{Component, ComponentId};
+use std::any::{Any, type_name};
 use std::fmt::{Debug, Display};
 
 pub type EntityId = u32;
@@ -66,11 +67,64 @@ impl EntityAllocator {
     }
 }
 
-// struct EntityBuilder<'e> {
-//     ecs: &'e mut Ecs,
-//     components: Vec<Box<dyn Component>>,
-// }
-//
+pub(crate) struct ComponentBox {
+    pub id: ComponentId,
+    pub data: Box<dyn Any>,
+}
+
+pub struct EntityBuilder<'e> {
+    ecs: &'e mut Ecs,
+    components: Vec<ComponentBox>,
+}
+
+impl<'e> EntityBuilder<'e> {
+    fn new(ecs: &'e mut Ecs) -> Self {
+        Self {
+            ecs,
+            components: Vec::new(),
+        }
+    }
+
+    pub fn with<T: Component>(mut self, component: T) -> Self {
+        self.components.push(ComponentBox {
+            id: T::component_id(),
+            data: Box::new(component),
+        });
+        self
+    }
+
+    pub fn spawn(self) -> Entity {
+        let mut key = ArchetypeKey::EMPTY;
+        for comp_box in &self.components {
+            key = key.with_id(comp_box.id);
+        }
+        debug_assert_eq!(
+            key.component_count(),
+            self.components.len(),
+            "Duplicate components found"
+        );
+
+        let entity = self.ecs.entity_allocator.alloc();
+        let (arch_id, row) = self
+            .ecs
+            .archetypes
+            .register_or_push_row(entity, key, self.components);
+        let sparse_entity = Some(SparseEntity {
+            archetype_id: arch_id,
+            generation: entity.generation,
+            row: row as u32,
+        });
+        let entity_id = entity.id as usize;
+        if entity_id >= self.ecs.entities_sparse.len() {
+            self.ecs.entities_sparse.push(sparse_entity)
+        } else {
+            self.ecs.entities_sparse[entity_id] = sparse_entity;
+        }
+        self.ecs.entities.push(entity);
+        entity
+    }
+}
+
 // impl<'e> EntityBuilder<'e> {
 //     fn new(ecs: &'e mut Ecs) -> Self {
 //         Self {
@@ -133,25 +187,8 @@ impl Ecs {
         // dbg!(&self.archetypes);
     }
 
-    pub fn spawn(&mut self) -> Entity {
-        let entity = self.entity_allocator.alloc();
-        let entity_id = entity.id;
-        let empty_archetype = self.archetypes.get_by_id_mut(0 as _).unwrap();
-        let entity_location = Some(SparseEntity {
-            archetype_id: 0,
-            generation: entity.generation,
-            row: empty_archetype.rows_len() as u32,
-        });
-        if entity_id as usize >= self.entities_sparse.len() {
-            self.entities_sparse.push(entity_location)
-        } else {
-            self.entities_sparse[entity_id as usize] = entity_location;
-        }
-
-        empty_archetype.push_entity_id(entity_id);
-        self.entities.push(entity);
-
-        entity
+    pub fn new_entity(&'_ mut self) -> EntityBuilder<'_> {
+        EntityBuilder::new(self)
     }
 
     pub fn add_component<T: Component>(&mut self, entity: Entity, component: T) {
@@ -168,11 +205,11 @@ impl Ecs {
 
         let old_arch_shallow = unsafe {
             // SAFETY: every entity belongs to an archetype
-            (self.archetypes.get_by_id_mut(old_id).unwrap_unchecked() as *mut Archetype).read()
+            (self.archetypes.get_by_id(old_id).unwrap_unchecked() as *const Archetype).read()
         };
 
         let new_id = self.archetypes.id_of_or_register_with(new_key, || {
-            let mut new_arch = old_arch_shallow.clone_empty();
+            let mut new_arch = Archetype::from_archetype(&old_arch_shallow);
             new_arch.add_column::<T>();
             new_arch
         });
@@ -203,11 +240,11 @@ impl Ecs {
 
         let old_arch_shallow = unsafe {
             // SAFETY: every entity belongs to an archetype
-            (self.archetypes.get_by_id_mut(old_id).unwrap_unchecked() as *mut Archetype).read()
+            (self.archetypes.get_by_id(old_id).unwrap_unchecked() as *const Archetype).read()
         };
 
         let new_id = self.archetypes.id_of_or_register_with(new_key, || {
-            let mut new_arch = old_arch_shallow.clone_empty();
+            let mut new_arch = Archetype::from_archetype(&old_arch_shallow);
             new_arch.remove_column::<T>();
             new_arch
         });
@@ -236,9 +273,9 @@ impl Ecs {
 
         let entity_new_row = new_arch.rows_len() as u32;
         new_arch.get_column_mut::<T>().push(component);
-        if let Some(swapped_entity_id) = old_arch.move_row_into(src_row as usize, new_arch, None) {
+        if let Some(swapped_entity) = old_arch.move_row_into(src_row as usize, new_arch, None) {
             // SAFETY: if swapped_entity is Some, it must be a valid sparse entity index
-            unsafe { self.get_sparse_slot_unchecked_mut(swapped_entity_id).row = src_row };
+            unsafe { self.get_sparse_slot_unchecked_mut(swapped_entity.id).row = src_row };
         }
         entity_new_row
     }
@@ -252,11 +289,11 @@ impl Ecs {
         let [old_arch, new_arch] = unsafe { self.archetypes.get_two_by_ids_mut(src_id, dst_id) };
 
         let entity_new_row = new_arch.rows_len() as u32;
-        if let Some(swapped_entity_id) =
+        if let Some(swapped_entity) =
             old_arch.move_row_into(src_row as usize, new_arch, Some(T::component_id()))
         {
             // SAFETY: if swapped_entity is Some, it must be a valid sparse entity index
-            unsafe { self.get_sparse_slot_unchecked_mut(swapped_entity_id).row = src_row };
+            unsafe { self.get_sparse_slot_unchecked_mut(swapped_entity.id).row = src_row };
         }
         entity_new_row
     }
@@ -287,42 +324,4 @@ impl Ecs {
                 .unwrap_unchecked()
         }
     }
-
-    // pub fn spawn(&mut self) -> Entity {
-    //     let id = self.entity_allocator.alloc();
-    //     self.entities.push(id);
-    //     // fixme wrong usage of get_archetype_or_insert, it will always insert empty regardless of key???
-    //     let archetype_key = ArchetypeKey::EMPTY;
-    //     let archetype = self.get_archetype_or_insert(archetype_key);
-    //     let entity_location = EntityLocation {
-    //         archetype_key,
-    //         row: archetype.rows() as u32,
-    //     };
-    //     archetype.push_entity(id);
-    //     // fixme ???????
-    //     let entity_index = id as usize - 1;
-    //     if entity_index >= self.entities_sparse.len() {
-    //         self.entities_sparse.push(Some(entity_location));
-    //     } else {
-    //         self.entities_sparse[entity_index] = Some(entity_location);
-    //     }
-    //     id
-    // }
-    //
-    // pub fn despawn(&mut self, entity: Entity) {
-    //     self.entity_allocator.free(entity);
-    //     self.entities.swap_remove(entity as usize);
-    // }
-    //
-    //
-    // // --- private ---
-    // fn get_archetype(&mut self, archetype_key: ArchetypeKey) -> &mut Archetype {
-    //     unsafe { self.archetypes.get_mut(&archetype_key).unwrap_unchecked() }
-    // }
-    //
-    // fn get_archetype_or_insert(&mut self, archetype_key: ArchetypeKey) -> &mut Archetype {
-    //     self.archetypes
-    //         .entry(archetype_key)
-    //         .or_insert_with(|| Archetype::new())
-    // }
 }

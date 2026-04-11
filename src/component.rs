@@ -1,11 +1,9 @@
-use crate::world::Entity;
-use blobvec::BlobVec;
+use blobvec::BlobVecMeta;
 use parking_lot::{RwLock, RwLockReadGuard};
 use rustc_hash::FxHashMap;
-use std::any::{Any, TypeId, type_name};
-use std::fmt::Debug;
+use std::any::{TypeId, type_name};
+use std::mem::MaybeUninit;
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicU32, Ordering};
 
 pub(crate) const ARCHETYPE_KEY_WORD_BITS: u32 = usize::BITS;
 pub(crate) const ARCHETYPE_KEY_WORDS: u32 = 4;
@@ -19,6 +17,7 @@ pub trait Component: Sized + 'static {
 
 pub struct ComponentRegistry {
     registry: FxHashMap<TypeId, ComponentId>,
+    storage_registry: Vec<BlobVecMeta>,
     id_counter: u32,
     built: bool,
 }
@@ -28,6 +27,7 @@ impl ComponentRegistry {
         Self {
             id_counter: 1,
             registry: FxHashMap::default(),
+            storage_registry: vec![unsafe { MaybeUninit::uninit().assume_init() }], // 0 item is null
             built: false,
         }
     }
@@ -52,10 +52,15 @@ impl ComponentRegistry {
                 type_id
             );
         };
+        self.storage_registry.push(BlobVecMeta::new::<T>());
     }
 
     pub(crate) fn component_id_of<T: Component>(&self) -> ComponentId {
         self.registry[&TypeId::of::<T>()]
+    }
+
+    pub(crate) fn storage_meta_of_id(&self, id: ComponentId) -> &BlobVecMeta {
+        &self.storage_registry[id as usize]
     }
 
     // --- private ---

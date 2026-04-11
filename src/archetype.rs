@@ -1,8 +1,10 @@
+use crate::component;
 use crate::component::{ARCHETYPE_KEY_WORD_BITS, ARCHETYPE_KEY_WORDS, Component, ComponentId};
-use crate::world::{Entity, EntityId};
+use crate::world::{ComponentBox, Entity, EntityId};
 use blobvec::BlobVec;
 use rustc_hash::FxHashMap;
 use std::any::type_name;
+use std::collections::hash_map::Entry;
 use std::fmt::Debug;
 
 pub type ArchetypeId = usize;
@@ -13,8 +15,18 @@ impl ArchetypeKey {
     pub const EMPTY: ArchetypeKey = ArchetypeKey([0; ARCHETYPE_KEY_WORDS as usize]);
 
     #[inline]
-    pub fn with<T: Component>(mut self) -> Self {
-        let component_bit = T::component_id() - 1;
+    pub fn with<T: Component>(self) -> Self {
+        self.with_id(T::component_id())
+    }
+
+    #[inline]
+    pub fn without<T: Component>(self) -> Self {
+        self.without_id(T::component_id())
+    }
+
+    #[inline]
+    pub fn with_id(mut self, comp_id: ComponentId) -> Self {
+        let component_bit = comp_id - 1;
         let bit = component_bit % ARCHETYPE_KEY_WORD_BITS;
         let word = component_bit / ARCHETYPE_KEY_WORD_BITS;
         self.0[word as usize] |= 1 << bit;
@@ -22,12 +34,16 @@ impl ArchetypeKey {
     }
 
     #[inline]
-    pub fn without<T: Component>(mut self) -> Self {
-        let component_bit = T::component_id() - 1;
+    pub fn without_id(mut self, comp_id: ComponentId) -> Self {
+        let component_bit = comp_id - 1;
         let bit = component_bit % ARCHETYPE_KEY_WORD_BITS;
         let word = component_bit / ARCHETYPE_KEY_WORD_BITS;
         self.0[word as usize] &= !(1 << bit);
         self
+    }
+
+    pub fn component_count(&self) -> usize {
+        self.0.iter().map(|word| word.count_ones() as usize).sum()
     }
 }
 
@@ -45,40 +61,56 @@ impl Debug for ArchetypeKey {
 }
 
 pub struct Archetype {
-    components: Vec<BlobVec>,
-    component_ids: Vec<ComponentId>,
-    entity_ids: Vec<EntityId>,
+    components: Vec<(ComponentId, BlobVec)>,
+    entities: Vec<Entity>,
     row_capacity: usize,
 }
 
 impl Archetype {
-    // --- construction ---
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             components: Vec::new(),
-            component_ids: Vec::new(),
-            entity_ids: Vec::new(),
+            entities: Vec::new(),
             row_capacity: 0,
         }
     }
 
-    pub fn clone_empty(&self) -> Self {
+    /// Creates a new empty archetype with the same component types as the given archetype.
+    pub(crate) fn from_archetype(other: &Self) -> Self {
         Self {
-            components: self
+            components: other
                 .components
                 .iter()
-                .map(|c| c.clone_empty())
+                .map(|(id, c)| (*id, c.meta().instantiate()))
                 .collect::<Vec<_>>(),
-            component_ids: self.component_ids.clone(),
-            entity_ids: Vec::new(),
+            entities: Vec::new(),
             row_capacity: 0,
         }
     }
 
-    pub fn reserve_rows(&mut self, additional: usize) {
+    /// creates a new archetype with the given entity + components.
+    pub(crate) fn from_row(entity: Entity, component_boxes: Vec<ComponentBox>) -> Self {
+        let comp_reg = component::registry();
+        let mut components = Vec::with_capacity(component_boxes.len());
+        for comp_box in component_boxes {
+            let mut column = comp_reg.storage_meta_of_id(comp_box.id).instantiate();
+            column.reserve(4); // fixme arbitrary
+            let data_ptr = Box::into_raw(comp_box.data) as *mut u8;
+            unsafe { column.push_from_ptr_unchecked(data_ptr) };
+            components.push((comp_box.id, column));
+        }
+
+        Self {
+            components,
+            entities: vec![entity],
+            row_capacity: 0,
+        }
+    }
+
+    pub(crate) fn reserve_rows(&mut self, additional: usize) {
         self.row_capacity += additional;
-        self.entity_ids.reserve(additional);
-        for column in self.components.iter_mut() {
+        self.entities.reserve(additional);
+        for (_, column) in self.components.iter_mut() {
             column.reserve(additional);
         }
     }
@@ -88,68 +120,42 @@ impl Archetype {
         self.reserve_rows(additional);
     }
 
-    // --- accessors ---
-    pub fn get_column<T: Component>(&self) -> &BlobVec {
-        match self.get_column_index::<T>() {
-            Some(col_idx) => &self.components[col_idx],
-            None => panic!("Component {} not found in archetype", type_name::<T>()),
-        }
-    }
-
-    pub fn get_column_mut<T: Component>(&mut self) -> &mut BlobVec {
-        match self.get_column_index::<T>() {
-            Some(col_idx) => &mut self.components[col_idx],
-            None => panic!("Component {} not found in archetype", type_name::<T>()),
-        }
-    }
-
-    pub fn get_column_by_id(&self, component_id: ComponentId) -> &BlobVec {
-        match self.get_column_index_by_id(component_id) {
-            Some(col_idx) => &self.components[col_idx],
-            None => panic!("ComponentId {} not found in archetype", component_id),
-        }
-    }
-
-    pub fn get_column_by_id_mut(&mut self, component_id: ComponentId) -> &mut BlobVec {
-        match self.get_column_index_by_id(component_id) {
-            Some(col_idx) => &mut self.components[col_idx],
-            None => panic!("ComponentId {} not found in archetype", component_id),
-        }
-    }
-
-    pub fn rows_len(&self) -> usize {
-        self.entity_ids.len()
-    }
-
-    pub fn rows_capacity(&self) -> usize {
-        self.row_capacity
-    }
-
-    // --- insertion ---
+    // --- meta ---
+    /// add column to archetype in place
     pub(crate) fn add_column<T: Component>(&mut self) {
+        let comp_id = T::component_id();
         debug_assert!(
-            self.get_column_index::<T>().is_none(),
+            self.try_get_column_index(comp_id).is_none(),
             "Component {} already exists in archetype",
             type_name::<T>()
         );
-        self.components.push(BlobVec::new::<T>());
-        self.component_ids.push(T::component_id());
+        self.components.push((comp_id, BlobVec::new::<T>()));
     }
 
-    pub(crate) fn push_entity_id(&mut self, entity: EntityId) {
-        self.entity_ids.push(entity);
-    }
-
-    // --- removal ---
+    /// remove column from archetype in place
     pub(crate) fn remove_column<T: Component>(&mut self) {
+        let comp_id = T::component_id();
         debug_assert!(
-            self.get_column_index::<T>().is_some(),
+            self.try_get_column_index(comp_id).is_some(),
             "Component {} does not exist in archetype",
             type_name::<T>()
         );
-        let idx = self.get_column_index::<T>().unwrap();
+        let idx = self.get_column_index(comp_id);
         self.components.swap_remove(idx);
-        self.component_ids.swap_remove(idx);
+    }
+
+    // --- data ---
+    /// push row of entity + components to archetype
+    pub(crate) fn push_row(&mut self, entity: Entity, components: Vec<ComponentBox>) {
+        if self.rows_len() >= self.rows_capacity() {
+            self.grow_rows();
+        }
+        for comp_box in components {
+            let column = self.get_column_by_id_mut(comp_box.id);
+            let data_ptr = Box::into_raw(comp_box.data) as *mut u8;
+            unsafe { column.push_from_ptr_unchecked(data_ptr) };
+        }
+        self.entities.push(entity);
     }
 
     /// Swap-removes a row from this archetype and moves it into `dst`.
@@ -164,51 +170,69 @@ impl Archetype {
         row: usize,
         dst: &mut Self,
         skip_comp_id: Option<ComponentId>,
-    ) -> Option<EntityId> {
+    ) -> Option<Entity> {
         if dst.rows_len() >= dst.rows_capacity() {
             dst.grow_rows();
         }
-        for (comp_id, column) in self.iter_columns_mut() {
-            if skip_comp_id == Some(comp_id) {
+        for (comp_id, column) in self.components.iter_mut() {
+            if skip_comp_id == Some(*comp_id) {
                 continue;
             }
-            let dst_column = dst.get_column_by_id_mut(comp_id);
+            let dst_column = dst.get_column_by_id_mut(*comp_id);
             unsafe {
                 let ptr = dst_column.push_uninit_unchecked();
                 column.swap_remove_into(row, ptr);
             }
         }
-        let entity = self.entity_ids.swap_remove(row);
-        dst.entity_ids.push(entity);
-        self.entity_ids.get(row).copied()
+        let entity = self.entities.swap_remove(row);
+        dst.entities.push(entity);
+        self.entities.get(row).copied()
+    }
+}
+
+impl Archetype {
+    // --- meta ---
+    pub fn rows_len(&self) -> usize {
+        self.entities.len()
     }
 
-    // --- access ---
-
-    pub(crate) fn iter_columns(&self) -> impl Iterator<Item = (ComponentId, &BlobVec)> {
-        self.component_ids
-            .iter()
-            .copied()
-            .zip(self.components.iter())
+    pub fn rows_capacity(&self) -> usize {
+        self.row_capacity
     }
 
-    pub(crate) fn iter_columns_mut(&mut self) -> impl Iterator<Item = (ComponentId, &mut BlobVec)> {
-        self.component_ids
-            .iter()
-            .copied()
-            .zip(self.components.iter_mut())
+    // --- data ---
+    pub fn get_column<T: Component>(&self) -> &BlobVec {
+        let col_idx = self.get_column_index(T::component_id());
+        &self.components[col_idx].1
+    }
+
+    pub fn get_column_mut<T: Component>(&mut self) -> &mut BlobVec {
+        let col_idx = self.get_column_index(T::component_id());
+        &mut self.components[col_idx].1
+    }
+
+    pub fn get_column_by_id(&self, component_id: ComponentId) -> &BlobVec {
+        let col_idx = self.get_column_index(component_id);
+        &self.components[col_idx].1
+    }
+
+    pub fn get_column_by_id_mut(&mut self, component_id: ComponentId) -> &mut BlobVec {
+        let col_idx = self.get_column_index(component_id);
+        &mut self.components[col_idx].1
     }
 
     // --- private ---
     #[inline]
-    fn get_column_index<T: Component>(&self) -> Option<usize> {
-        let comp_id = T::component_id();
-        self.get_column_index_by_id(comp_id)
+    fn try_get_column_index(&self, comp_id: ComponentId) -> Option<usize> {
+        self.components.iter().position(|(id, _)| *id == comp_id)
     }
 
     #[inline]
-    fn get_column_index_by_id(&self, comp_id: ComponentId) -> Option<usize> {
-        self.component_ids.iter().position(|id| *id == comp_id)
+    fn get_column_index(&self, comp_id: ComponentId) -> usize {
+        match self.try_get_column_index(comp_id) {
+            Some(idx) => idx,
+            None => panic!("ComponentId {} not found in archetype", comp_id), // todo comp type name instead of id
+        }
     }
 }
 
@@ -216,7 +240,12 @@ impl Debug for Archetype {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Archetype {{\n")?;
         write!(f, "    components: [")?;
-        for (i, comp_name) in self.components.iter().map(|c| c.type_name()).enumerate() {
+        for (i, comp_name) in self
+            .components
+            .iter()
+            .map(|(_, comp)| comp.type_name())
+            .enumerate()
+        {
             if i > 0 {
                 write!(f, ", ")?;
             }
@@ -224,7 +253,7 @@ impl Debug for Archetype {
         }
         write!(f, "],\n")?;
         write!(f, "    entity_ids: [")?;
-        for (i, entity) in self.entity_ids.iter().enumerate() {
+        for (i, entity) in self.entities.iter().enumerate() {
             if i > 0 {
                 write!(f, ", ")?;
             }
@@ -279,6 +308,34 @@ impl ArchetypeRegistry {
         self.dense_keys.get(id)
     }
 
+    pub(crate) fn register_or_push_row(
+        &mut self,
+        entity: Entity,
+        key: ArchetypeKey,
+        components: Vec<ComponentBox>,
+    ) -> (ArchetypeId, usize) {
+        match self.registry.entry(key) {
+            Entry::Occupied(e) => {
+                let arch_id = *e.get();
+                let arch = unsafe {
+                    // SAFETY: key in registry == id in dense
+                    self.dense.get_unchecked_mut(arch_id)
+                };
+                let row = arch.rows_len();
+                arch.push_row(entity, components);
+                (arch_id, row)
+            }
+            Entry::Vacant(v) => {
+                let arch = Archetype::from_row(entity, components);
+                let id = self.dense.len();
+                self.dense_keys.push(key);
+                self.dense.push(arch);
+                v.insert(id);
+                (id, 0)
+            }
+        }
+    }
+
     pub(crate) fn id_of_or_register_with<F: FnOnce() -> Archetype>(
         &mut self,
         key: ArchetypeKey,
@@ -310,98 +367,3 @@ impl ArchetypeRegistry {
         self.dense_keys.iter().zip(self.dense.iter_mut())
     }
 }
-
-// impl Archetype {
-//     // --- construction ---
-//     pub fn new() -> Self {
-//         Self {
-//             components: Vec::new(),
-//             component_ids: Vec::new(),
-//             entity_ids: Vec::new(),
-//         }
-//     }
-//
-//     pub fn clone_empty(&self) -> Self {
-//         Self {
-//             components: self
-//                 .components
-//                 .iter()
-//                 .map(|c| c.clone_empty())
-//                 .collect::<Vec<_>>(),
-//             component_ids: self.component_ids.clone(),
-//             entity_ids: Vec::new(),
-//         }
-//     }
-//
-//     // --- accessors ---
-//     pub fn get_column<T: Component>(&self) -> &BlobVec {
-//         match self.get_column_index::<T>() {
-//             Some(col_idx) => &self.components[col_idx],
-//             None => panic!("Component {} not found in archetype", type_name::<T>()),
-//         }
-//     }
-//
-//     pub fn get_column_mut<T: Component>(&mut self) -> &mut BlobVec {
-//         match self.get_column_index::<T>() {
-//             Some(col_idx) => &mut self.components[col_idx],
-//             None => panic!("Component {} not found in archetype", type_name::<T>()),
-//         }
-//     }
-//
-//     pub fn get_column_by_id(&self, component_id: ComponentId) -> &BlobVec {
-//         match self.get_column_index_by_id(component_id) {
-//             Some(col_idx) => &self.components[col_idx],
-//             None => panic!("ComponentId {} not found in archetype", component_id),
-//         }
-//     }
-//
-//     pub fn get_column_by_id_mut(&mut self, component_id: ComponentId) -> &mut BlobVec {
-//         match self.get_column_index_by_id(component_id) {
-//             Some(col_idx) => &mut self.components[col_idx],
-//             None => panic!("ComponentId {} not found in archetype", component_id),
-//         }
-//     }
-//
-//     pub fn rows(&self) -> usize {
-//         self.entity_ids.len()
-//     }
-//
-//     // --- insertion ---
-//     pub(crate) fn add_column<T: Component>(&mut self) {
-//         debug_assert!(
-//             self.get_column_index::<T>().is_none(),
-//             "Component {} already exists in archetype",
-//             type_name::<T>()
-//         );
-//         let column = BlobVec::new::<T>();
-//         self.components.push(column);
-//         self.component_ids.push(T::component_id());
-//     }
-//
-//     /// swap removes a row, copies it into the other archetype
-//     pub(crate) fn swap_row_into(&mut self, other: &mut Self, row: usize) -> Option<Entity> {
-//         for (column, comp_id) in self.components.iter_mut().zip(self.component_ids.iter()) {
-//             let other_column = other.get_column_by_id_mut(*comp_id);
-//             column.swap_pop_into(other_column, row);
-//         }
-//         let entity = self.entity_ids.swap_remove(row);
-//         other.entity_ids.push(entity);
-//         self.entity_ids.get(row).copied()
-//     }
-//
-//     pub(crate) fn push_entity(&mut self, entity: Entity) {
-//         self.entity_ids.push(entity);
-//     }
-//
-//     // --- private ---
-//     #[inline]
-//     fn get_column_index<T: Component>(&self) -> Option<usize> {
-//         let comp_id = T::component_id();
-//         self.get_column_index_by_id(comp_id)
-//     }
-//
-//     #[inline]
-//     fn get_column_index_by_id(&self, comp_id: ComponentId) -> Option<usize> {
-//         self.component_ids.iter().position(|id| *id == comp_id)
-//     }
-// }

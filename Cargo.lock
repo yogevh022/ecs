@@ -10,8 +10,8 @@ checksum = "843867be96c8daad0d758b57df9392b6d8d271134fce549de6ce169ff98a92af"
 
 [[package]]
 name = "blobvec"
-version = "0.1.8"
-source = "git+https://github.com/yogevh022/blobvec#4554dcf1b351fff20f4a22015381d91e69c08a08"
+version = "0.2.3"
+source = "git+https://github.com/yogevh022/blobvec#f1b0c5983e737d4aedf214645c9a5e74fc6a02f9"
 
 [[package]]
 name = "cfg-if"
