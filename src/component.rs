@@ -84,17 +84,6 @@ pub fn registry<'a>() -> RwLockReadGuard<'a, ComponentRegistry> {
 }
 
 #[macro_export]
-macro_rules! archetype_key {
-    ($($T:ident),+) => {
-        {
-            let mut key = $crate::archetype::ArchetypeKey::EMPTY;
-            $(key = key.with::<$T>();)+
-            key
-        }
-    };
-}
-
-#[macro_export]
 macro_rules! register_component {
     ($T:ty) => {
         $crate::component::component_registry_lock()

@@ -1,6 +1,6 @@
 use crate::archetype::{Archetype, ArchetypeId, ArchetypeKey, ArchetypeRegistry};
-use crate::component;
 use crate::component::{Component, ComponentId};
+use crate::query::{QueryIter, Queryable};
 use std::any::{Any, type_name};
 use std::fmt::{Debug, Display};
 
@@ -41,7 +41,7 @@ impl EntityAllocator {
         Self {
             counter: 1,
             generation: 0,
-            free_list: Vec::new(),
+            free_list: Vec::new(), // todo with capacity?
         }
     }
 
@@ -81,7 +81,7 @@ impl<'e> EntityBuilder<'e> {
     fn new(ecs: &'e mut Ecs) -> Self {
         Self {
             ecs,
-            components: Vec::new(),
+            components: Vec::with_capacity(16), // arbitrary
         }
     }
 
@@ -125,37 +125,6 @@ impl<'e> EntityBuilder<'e> {
     }
 }
 
-// impl<'e> EntityBuilder<'e> {
-//     fn new(ecs: &'e mut Ecs) -> Self {
-//         Self {
-//             ecs,
-//             components: Vec::new(), // fixme needs sufficient preallocation
-//         }
-//     }
-//
-//     fn with(mut self, component: Box<dyn Component>) -> Self {
-//         self.components.push(component);
-//         self
-//     }
-//
-//     fn build(self) -> Entity {
-//         // fixme make faster solution
-//         let entity = self.ecs.spawn();
-//         let reg = component_registry_read();
-//         let component_ids = self
-//             .components
-//             .iter()
-//             .filter_map(|comp| reg.component_id(comp))
-//             .collect::<Vec<_>>();
-//         let archetype_keys = reg.archetype_key(&component_ids);
-//         self.ecs.archetypes.entry(archetype_keys).or_insert_with(|| Archetype::new());
-//         for component in self.components {
-//             self.ecs.add_component(entity, component);
-//         }
-//         entity
-//     }
-// }
-
 #[derive(Debug, Copy, Clone)]
 struct SparseEntity {
     archetype_id: ArchetypeId,
@@ -180,11 +149,16 @@ impl Ecs {
         }
     }
 
-    pub fn debug(&self) {
-        dbg!(&self.entities);
-        // dbg!(&self.entities_sparse);
-        self.archetypes.debug();
-        // dbg!(&self.archetypes);
+    pub fn query<WITH: Queryable<Key = ArchetypeKey>>(
+        &mut self,
+    ) -> QueryIter<WITH> {
+        self.archetypes.query::<WITH>()
+    }
+
+    pub fn query_specific<WITH: Queryable<Key = ArchetypeKey>, WITHOUT: Queryable<Key = ArchetypeKey>>(
+        &mut self,
+    ) -> QueryIter<WITH> {
+        self.archetypes.query_specific::<WITH, WITHOUT>()
     }
 
     pub fn new_entity(&'_ mut self) -> EntityBuilder<'_> {

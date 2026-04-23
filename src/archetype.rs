@@ -1,11 +1,13 @@
 use crate::component;
 use crate::component::{ARCHETYPE_KEY_WORD_BITS, ARCHETYPE_KEY_WORDS, Component, ComponentId};
-use crate::world::{ComponentBox, Entity, EntityId};
+use crate::ecs::{ComponentBox, Entity};
+use crate::query::{QueryIter, Queryable};
 use blobvec::BlobVec;
 use rustc_hash::FxHashMap;
 use std::any::type_name;
 use std::collections::hash_map::Entry;
 use std::fmt::Debug;
+use std::marker::PhantomData;
 
 pub type ArchetypeId = usize;
 
@@ -40,6 +42,24 @@ impl ArchetypeKey {
         let word = component_bit / ARCHETYPE_KEY_WORD_BITS;
         self.0[word as usize] &= !(1 << bit);
         self
+    }
+
+    pub fn contains(&self, other: &Self) -> bool {
+        for (word, other_word) in self.0.iter().zip(other.0.iter()) {
+            if word & other_word != *other_word {
+                return false;
+            }
+        }
+        true
+    }
+
+    pub fn disjoint(&self, other: &Self) -> bool {
+        for (word, other_word) in self.0.iter().zip(other.0.iter()) {
+            if word & other_word != 0 {
+                return false;
+            }
+        }
+        true
     }
 
     pub fn component_count(&self) -> usize {
@@ -118,6 +138,13 @@ impl Archetype {
     fn grow_rows(&mut self) {
         let additional = self.rows_len().max(4);
         self.reserve_rows(additional);
+    }
+
+    // --- ecs access ---
+    pub(crate) fn iter<Q: Queryable>(&mut self) -> ArchetypeIter<Q> {
+        let row_count = self.rows_len();
+        let columns = Q::fetch_columns(self);
+        ArchetypeIter::new(columns, row_count)
     }
 
     // --- meta ---
@@ -236,6 +263,32 @@ impl Archetype {
     }
 }
 
+pub struct ArchetypeIter<Q: Queryable> {
+    columns: Q::ColumnTuple,
+    index: usize,
+    end: usize,
+}
+
+impl<Q: Queryable> ArchetypeIter<Q> {
+    pub(crate) fn new(columns: Q::ColumnTuple, end: usize) -> Self {
+        Self {
+            columns,
+            index: 0,
+            end,
+        }
+    }
+
+    pub(crate) fn next(&mut self) -> Option<Q::IterTuple<'_>> {
+        if self.index < self.end {
+            let item = Q::fetch_row(self.columns, self.index);
+            self.index += 1;
+            Some(item)
+        } else {
+            None
+        }
+    }
+}
+
 impl Debug for Archetype {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Archetype {{\n")?;
@@ -280,8 +333,36 @@ impl ArchetypeRegistry {
         this
     }
 
-    pub fn debug(&self) {
-        dbg!(&self.dense);
+    pub(crate) fn query<WITH: Queryable<Key = ArchetypeKey>>(&mut self) -> QueryIter<WITH> {
+        let mut iters: Vec<ArchetypeIter<WITH>> = Vec::new();
+        let with_key = WITH::key();
+        for i in 0..self.dense_keys.len() {
+            let arch_key = &self.dense_keys[i];
+            if arch_key.contains(&with_key) {
+                let arch = unsafe { self.dense.get_unchecked_mut(i) };
+                iters.push(arch.iter());
+            }
+        }
+        QueryIter::new(iters)
+    }
+
+    pub(crate) fn query_specific<
+        WITH: Queryable<Key = ArchetypeKey>,
+        WITHOUT: Queryable<Key = ArchetypeKey>,
+    >(
+        &mut self,
+    ) -> QueryIter<WITH> {
+        let mut iters: Vec<ArchetypeIter<WITH>> = Vec::new();
+        let with_key = WITH::key();
+        let without_key = WITHOUT::key();
+        for i in 0..self.dense_keys.len() {
+            let arch_key = &self.dense_keys[i];
+            if arch_key.contains(&with_key) && arch_key.disjoint(&without_key) {
+                let arch = unsafe { self.dense.get_unchecked_mut(i) };
+                iters.push(arch.iter());
+            }
+        }
+        QueryIter::new(iters)
     }
 
     pub(crate) fn get_by_id(&self, id: ArchetypeId) -> Option<&Archetype> {
