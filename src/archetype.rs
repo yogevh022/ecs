@@ -7,7 +7,6 @@ use rustc_hash::FxHashMap;
 use std::any::type_name;
 use std::collections::hash_map::Entry;
 use std::fmt::Debug;
-use std::marker::PhantomData;
 
 pub type ArchetypeId = usize;
 
@@ -289,6 +288,7 @@ impl<Q: Queryable> ArchetypeIter<Q> {
     }
 }
 
+#[cfg(debug_assertions)]
 impl Debug for Archetype {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Archetype {{\n")?;

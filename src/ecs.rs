@@ -41,7 +41,7 @@ impl EntityAllocator {
         Self {
             counter: 1,
             generation: 0,
-            free_list: Vec::new(), // todo with capacity?
+            free_list: Vec::new(),
         }
     }
 
@@ -94,34 +94,17 @@ impl<'e> EntityBuilder<'e> {
     }
 
     pub fn spawn(self) -> Entity {
-        let mut key = ArchetypeKey::EMPTY;
-        for comp_box in &self.components {
-            key = key.with_id(comp_box.id);
-        }
-        debug_assert_eq!(
-            key.component_count(),
-            self.components.len(),
-            "Duplicate components found"
-        );
+        self.ecs.spawn_with_components(self.components)
+    }
+}
 
-        let entity = self.ecs.entity_allocator.alloc();
-        let (arch_id, row) = self
-            .ecs
-            .archetypes
-            .register_or_push_row(entity, key, self.components);
-        let sparse_entity = Some(SparseEntity {
-            archetype_id: arch_id,
-            generation: entity.generation,
-            row: row as u32,
-        });
-        let entity_id = entity.id as usize;
-        if entity_id >= self.ecs.entities_sparse.len() {
-            self.ecs.entities_sparse.push(sparse_entity)
-        } else {
-            self.ecs.entities_sparse[entity_id] = sparse_entity;
-        }
-        self.ecs.entities.push(entity);
-        entity
+struct EntityPrefab {
+    components: Vec<ComponentBox>,
+}
+
+impl EntityPrefab {
+    pub fn from(components: Vec<ComponentBox>) -> Self {
+        Self { components }
     }
 }
 
@@ -149,13 +132,14 @@ impl Ecs {
         }
     }
 
-    pub fn query<WITH: Queryable<Key = ArchetypeKey>>(
-        &mut self,
-    ) -> QueryIter<WITH> {
+    pub fn query<WITH: Queryable<Key = ArchetypeKey>>(&mut self) -> QueryIter<WITH> {
         self.archetypes.query::<WITH>()
     }
 
-    pub fn query_specific<WITH: Queryable<Key = ArchetypeKey>, WITHOUT: Queryable<Key = ArchetypeKey>>(
+    pub fn query_specific<
+        WITH: Queryable<Key = ArchetypeKey>,
+        WITHOUT: Queryable<Key = ArchetypeKey>,
+    >(
         &mut self,
     ) -> QueryIter<WITH> {
         self.archetypes.query_specific::<WITH, WITHOUT>()
@@ -163,6 +147,10 @@ impl Ecs {
 
     pub fn new_entity(&'_ mut self) -> EntityBuilder<'_> {
         EntityBuilder::new(self)
+    }
+
+    pub fn spawn_prefab(&mut self, prefab: &EntityPrefab) -> Entity {
+        todo!()
     }
 
     pub fn add_component<T: Component>(&mut self, entity: Entity, component: T) {
@@ -236,6 +224,36 @@ impl Ecs {
     }
 
     // --- private ---
+    fn spawn_with_components(&mut self, components: Vec<ComponentBox>) -> Entity {
+        let mut key = ArchetypeKey::EMPTY;
+        for comp_box in &components {
+            key = key.with_id(comp_box.id);
+        }
+        debug_assert_eq!(
+            key.component_count(),
+            components.len(),
+            "Duplicate components found"
+        );
+
+        let entity = self.entity_allocator.alloc();
+        let (arch_id, row) = self
+            .archetypes
+            .register_or_push_row(entity, key, components);
+        let sparse_entity = Some(SparseEntity {
+            archetype_id: arch_id,
+            generation: entity.generation,
+            row: row as u32,
+        });
+        let entity_id = entity.id as usize;
+        if entity_id >= self.entities_sparse.len() {
+            self.entities_sparse.push(sparse_entity)
+        } else {
+            self.entities_sparse[entity_id] = sparse_entity;
+        }
+        self.entities.push(entity);
+        entity
+    }
+
     unsafe fn migrate_columns_with<T: Component>(
         &mut self,
         src_id: ArchetypeId,
