@@ -1,6 +1,6 @@
 use crate::archetype::{Archetype, ArchetypeId, ArchetypeKey, ArchetypeRegistry};
 use crate::component::{Component, ComponentId};
-use crate::query::{QueryIter, Queryable};
+use crate::query::{QueryFilter, QueryIter, Queryable};
 use std::any::{Any, type_name};
 use std::fmt::{Debug, Display};
 
@@ -132,17 +132,14 @@ impl Ecs {
         }
     }
 
-    pub fn query<WITH: Queryable<Key = ArchetypeKey>>(&mut self) -> QueryIter<WITH> {
-        self.archetypes.query::<WITH>()
+    pub fn query_filtered<Q: Queryable<Key = ArchetypeKey>, F: QueryFilter>(
+        &mut self,
+    ) -> QueryIter<Q> {
+        self.archetypes.query_filtered::<Q, F>()
     }
 
-    pub fn query_specific<
-        WITH: Queryable<Key = ArchetypeKey>,
-        WITHOUT: Queryable<Key = ArchetypeKey>,
-    >(
-        &mut self,
-    ) -> QueryIter<WITH> {
-        self.archetypes.query_specific::<WITH, WITHOUT>()
+    pub fn query<Q: Queryable<Key = ArchetypeKey>>(&mut self) -> QueryIter<Q> {
+        self.query_filtered::<Q, ()>()
     }
 
     pub fn new_entity(&'_ mut self) -> EntityBuilder<'_> {
@@ -162,21 +159,14 @@ impl Ecs {
         let new_key = old_key.with::<T>();
 
         if old_key == new_key {
-            panic!("{} already has component {}", entity, type_name::<T>());
+            let arch = self.archetypes.get_by_id_mut(old_id).unwrap();
+            arch.set(old_row as usize, component);
+            return;
         }
 
-        let old_arch_shallow = unsafe {
-            // SAFETY: every entity belongs to an archetype
-            (self.archetypes.get_by_id(old_id).unwrap_unchecked() as *const Archetype).read()
-        };
-
-        let new_id = self.archetypes.id_of_or_register_with(new_key, || {
-            let mut new_arch = Archetype::from_archetype(&old_arch_shallow);
-            new_arch.add_column::<T>();
-            new_arch
-        });
-        // forget the shallow copy of old_arch to avoid double free
-        std::mem::forget(old_arch_shallow);
+        let new_id =
+            self.archetypes
+                .id_of_or_create_from(old_id, new_key, Archetype::add_column::<T>);
 
         let entity_new_row = unsafe {
             // SAFETY: both old_id and new_id archetypes exist, confirmed above
@@ -197,21 +187,12 @@ impl Ecs {
         let new_key = old_key.without::<T>();
 
         if old_key == new_key {
-            panic!("{} does not have component {}", entity, type_name::<T>());
+            return; // component does not exist
         }
 
-        let old_arch_shallow = unsafe {
-            // SAFETY: every entity belongs to an archetype
-            (self.archetypes.get_by_id(old_id).unwrap_unchecked() as *const Archetype).read()
-        };
-
-        let new_id = self.archetypes.id_of_or_register_with(new_key, || {
-            let mut new_arch = Archetype::from_archetype(&old_arch_shallow);
-            new_arch.remove_column::<T>();
-            new_arch
-        });
-        // forget the shallow copy of old_arch to avoid double free
-        std::mem::forget(old_arch_shallow);
+        let new_id =
+            self.archetypes
+                .id_of_or_create_from(old_id, new_key, Archetype::remove_column::<T>);
 
         let entity_new_row = unsafe {
             // SAFETY: both old_id and new_id archetypes exist, confirmed above

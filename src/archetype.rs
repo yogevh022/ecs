@@ -1,12 +1,13 @@
 use crate::component;
 use crate::component::{ARCHETYPE_KEY_WORD_BITS, ARCHETYPE_KEY_WORDS, Component, ComponentId};
 use crate::ecs::{ComponentBox, Entity};
-use crate::query::{QueryIter, Queryable};
+use crate::query::{QueryFilter, QueryIter, Queryable};
 use blobvec::BlobVec;
 use rustc_hash::FxHashMap;
 use std::any::type_name;
 use std::collections::hash_map::Entry;
 use std::fmt::Debug;
+use std::ops::BitOr;
 
 pub type ArchetypeId = usize;
 
@@ -66,6 +67,15 @@ impl ArchetypeKey {
     }
 }
 
+impl BitOr for ArchetypeKey {
+    type Output = Self;
+
+    #[inline]
+    fn bitor(self, other: Self) -> Self {
+        Self(std::array::from_fn(|i| self.0[i] | other.0[i]))
+    }
+}
+
 impl Debug for ArchetypeKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "ArchKey<")?;
@@ -122,7 +132,7 @@ impl Archetype {
         Self {
             components,
             entities: vec![entity],
-            row_capacity: 0,
+            row_capacity: 1,
         }
     }
 
@@ -202,6 +212,7 @@ impl Archetype {
         }
         for (comp_id, column) in self.components.iter_mut() {
             if skip_comp_id == Some(*comp_id) {
+                column.swap_remove(row);
                 continue;
             }
             let dst_column = dst.get_column_by_id_mut(*comp_id);
@@ -235,6 +246,10 @@ impl Archetype {
     pub fn get_column_mut<T: Component>(&mut self) -> &mut BlobVec {
         let col_idx = self.get_column_index(T::component_id());
         &mut self.components[col_idx].1
+    }
+
+    pub(crate) fn set<T: Component>(&mut self, row: usize, value: T) {
+        *self.get_column_mut::<T>().get_mut(row).unwrap() = value;
     }
 
     pub fn get_column_by_id(&self, component_id: ComponentId) -> &BlobVec {
@@ -333,33 +348,15 @@ impl ArchetypeRegistry {
         this
     }
 
-    pub(crate) fn query<WITH: Queryable<Key = ArchetypeKey>>(&mut self) -> QueryIter<WITH> {
-        let mut iters: Vec<ArchetypeIter<WITH>> = Vec::new();
-        let with_key = WITH::key();
+    pub(crate) fn query_filtered<Q: Queryable<Key = ArchetypeKey>, F: QueryFilter>(&mut self) -> QueryIter<Q> {
+        let with = Q::key() | F::include();
+        let without = F::exclude();
+        let mut iters: Vec<ArchetypeIter<Q>> = Vec::new();
         for i in 0..self.dense_keys.len() {
             let arch_key = &self.dense_keys[i];
-            if arch_key.contains(&with_key) {
+            if arch_key.contains(&with) && arch_key.disjoint(&without) {
                 let arch = unsafe { self.dense.get_unchecked_mut(i) };
-                iters.push(arch.iter());
-            }
-        }
-        QueryIter::new(iters)
-    }
-
-    pub(crate) fn query_specific<
-        WITH: Queryable<Key = ArchetypeKey>,
-        WITHOUT: Queryable<Key = ArchetypeKey>,
-    >(
-        &mut self,
-    ) -> QueryIter<WITH> {
-        let mut iters: Vec<ArchetypeIter<WITH>> = Vec::new();
-        let with_key = WITH::key();
-        let without_key = WITHOUT::key();
-        for i in 0..self.dense_keys.len() {
-            let arch_key = &self.dense_keys[i];
-            if arch_key.contains(&with_key) && arch_key.disjoint(&without_key) {
-                let arch = unsafe { self.dense.get_unchecked_mut(i) };
-                iters.push(arch.iter());
+                iters.push(arch.iter::<Q>());
             }
         }
         QueryIter::new(iters)
@@ -417,17 +414,18 @@ impl ArchetypeRegistry {
         }
     }
 
-    pub(crate) fn id_of_or_register_with<F: FnOnce() -> Archetype>(
+    pub(crate) fn id_of_or_create_from(
         &mut self,
-        key: ArchetypeKey,
-        default: F,
+        old_id: ArchetypeId,
+        new_key: ArchetypeKey,
+        configure: impl FnOnce(&mut Archetype),
     ) -> ArchetypeId {
-        *self.registry.entry(key).or_insert_with(|| {
-            let id = self.dense.len();
-            self.dense_keys.push(key);
-            self.dense.push(default());
-            id
-        })
+        if let Some(id) = self.id_of(new_key) {
+            return id;
+        }
+        let mut arch = Archetype::from_archetype(self.get_by_id(old_id).unwrap());
+        configure(&mut arch);
+        self.register(new_key, arch)
     }
 
     pub(crate) fn register(&mut self, key: ArchetypeKey, arch: Archetype) -> ArchetypeId {

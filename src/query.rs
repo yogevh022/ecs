@@ -4,6 +4,41 @@ use blobvec::BlobVec;
 use ecs_macros::impl_queryable_variadic_up_to;
 use std::marker::PhantomData;
 
+pub trait QueryFilter {
+    fn include() -> ArchetypeKey {
+        ArchetypeKey::EMPTY
+    }
+    fn exclude() -> ArchetypeKey {
+        ArchetypeKey::EMPTY
+    }
+}
+
+pub struct With<T: Component>(PhantomData<T>);
+pub struct Without<T: Component>(PhantomData<T>);
+
+impl QueryFilter for () {}
+
+impl<T: Component> QueryFilter for With<T> {
+    fn include() -> ArchetypeKey {
+        ArchetypeKey::EMPTY.with_id(T::component_id())
+    }
+}
+
+impl<T: Component> QueryFilter for Without<T> {
+    fn exclude() -> ArchetypeKey {
+        ArchetypeKey::EMPTY.with_id(T::component_id())
+    }
+}
+
+impl<A: QueryFilter, B: QueryFilter> QueryFilter for (A, B) {
+    fn include() -> ArchetypeKey {
+        A::include() | B::include()
+    }
+    fn exclude() -> ArchetypeKey {
+        A::exclude() | B::exclude()
+    }
+}
+
 pub trait Queryable {
     type Key: Copy;
     type IterTuple<'a>;
