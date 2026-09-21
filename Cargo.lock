@@ -25,6 +25,7 @@ version = "0.1.1"
 dependencies = [
  "blobvec",
  "ecs_macros",
+ "erased_vec",
  "parking_lot",
  "rustc-hash",
 ]
@@ -36,6 +37,11 @@ dependencies = [
  "quote",
  "syn",
 ]
+
+[[package]]
+name = "erased_vec"
+version = "0.1.0"
+source = "git+https://github.com/yogevh022/erased_vec#a3b5bd180e49b45e47c61a0c3cd650713a95d51b"
 
 [[package]]
 name = "libc"

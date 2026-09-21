@@ -517,7 +517,7 @@ fn main() {
     print!("Registering components... ");
     let q = timed!({
         test_register();
-        component::build_registry();
+        component::build();
     });
     print!("done in {:?}\n", q);
 

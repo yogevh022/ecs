@@ -1,4 +1,4 @@
-use crate::archetype::{Archetype, ArchetypeId, ArchetypeKey, ArchetypeRegistry};
+use crate::archetype::{Archetype, ArchetypeId, ArchetypeKey, Archetypes};
 use crate::component::{Component, ComponentId};
 use crate::query::{QueryFilter, QueryIter, Queryable};
 use std::any::{Any, type_name};
@@ -119,7 +119,7 @@ pub struct Ecs {
     entity_allocator: EntityAllocator,
     entities: Vec<Entity>,
     entities_sparse: Vec<Option<SparseEntity>>,
-    archetypes: ArchetypeRegistry,
+    archetypes: Archetypes,
 }
 
 impl Ecs {
@@ -128,7 +128,7 @@ impl Ecs {
             entity_allocator: EntityAllocator::new(),
             entities: Vec::new(),
             entities_sparse: vec![None], // reserved 0 for null entity
-            archetypes: ArchetypeRegistry::new(),
+            archetypes: Archetypes::new(),
         }
     }
 

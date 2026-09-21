@@ -8,6 +8,7 @@ rustc-hash = "2.1.2"
 parking_lot = "0.12.5"
 ecs_macros = { path = "ecs_macros" }
 blobvec = { git = "https://github.com/yogevh022/blobvec" }
+erased_vec = { git = "https://github.com/yogevh022/erased_vec" }
 
 [profile.release]
 debug = true

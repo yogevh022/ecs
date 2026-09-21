@@ -12,9 +12,9 @@ use std::ops::BitOr;
 pub type ArchetypeId = usize;
 
 #[derive(PartialEq, Eq, Hash, Clone, Copy)]
-pub struct ArchetypeKey(pub(crate) [usize; ARCHETYPE_KEY_WORDS as usize]);
+pub struct ArchetypeKey(pub(crate) [usize; ARCHETYPE_KEY_WORDS]);
 impl ArchetypeKey {
-    pub const EMPTY: ArchetypeKey = ArchetypeKey([0; ARCHETYPE_KEY_WORDS as usize]);
+    pub const EMPTY: ArchetypeKey = ArchetypeKey([0; ARCHETYPE_KEY_WORDS]);
 
     #[inline]
     pub fn with<T: Component>(self) -> Self {
@@ -31,7 +31,7 @@ impl ArchetypeKey {
         let component_bit = comp_id - 1;
         let bit = component_bit % ARCHETYPE_KEY_WORD_BITS;
         let word = component_bit / ARCHETYPE_KEY_WORD_BITS;
-        self.0[word as usize] |= 1 << bit;
+        self.0[word] |= 1 << bit;
         self
     }
 
@@ -40,7 +40,7 @@ impl ArchetypeKey {
         let component_bit = comp_id - 1;
         let bit = component_bit % ARCHETYPE_KEY_WORD_BITS;
         let word = component_bit / ARCHETYPE_KEY_WORD_BITS;
-        self.0[word as usize] &= !(1 << bit);
+        self.0[word] &= !(1 << bit);
         self
     }
 
@@ -119,10 +119,10 @@ impl Archetype {
 
     /// creates a new archetype with the given entity + components.
     pub(crate) fn from_row(entity: Entity, component_boxes: Vec<ComponentBox>) -> Self {
-        let comp_reg = component::registry();
+        let types = component::get();
         let mut components = Vec::with_capacity(component_boxes.len());
         for comp_box in component_boxes {
-            let mut column = comp_reg.storage_meta_of_id(comp_box.id).instantiate();
+            let mut column = types.storage_meta_of_id(comp_box.id).instantiate();
             column.reserve(4); // fixme arbitrary
             let data_ptr = Box::into_raw(comp_box.data) as *mut u8;
             unsafe { column.push_from_ptr_unchecked(data_ptr) };
@@ -331,16 +331,16 @@ impl Debug for Archetype {
     }
 }
 
-pub struct ArchetypeRegistry {
-    registry: FxHashMap<ArchetypeKey, ArchetypeId>,
+pub struct Archetypes {
+    ids: FxHashMap<ArchetypeKey, ArchetypeId>,
     dense: Vec<Archetype>,
     dense_keys: Vec<ArchetypeKey>,
 }
 
-impl ArchetypeRegistry {
+impl Archetypes {
     pub fn new() -> Self {
         let mut this = Self {
-            registry: FxHashMap::default(),
+            ids: FxHashMap::default(),
             dense: Vec::new(),
             dense_keys: Vec::new(),
         };
@@ -379,7 +379,7 @@ impl ArchetypeRegistry {
     }
 
     pub(crate) fn id_of(&self, key: ArchetypeKey) -> Option<ArchetypeId> {
-        self.registry.get(&key).copied()
+        self.ids.get(&key).copied()
     }
 
     pub(crate) fn key_of(&self, id: ArchetypeId) -> Option<&ArchetypeKey> {
@@ -392,11 +392,11 @@ impl ArchetypeRegistry {
         key: ArchetypeKey,
         components: Vec<ComponentBox>,
     ) -> (ArchetypeId, usize) {
-        match self.registry.entry(key) {
+        match self.ids.entry(key) {
             Entry::Occupied(e) => {
                 let arch_id = *e.get();
                 let arch = unsafe {
-                    // SAFETY: key in registry == id in dense
+                    // SAFETY: key in ids == id in dense
                     self.dense.get_unchecked_mut(arch_id)
                 };
                 let row = arch.rows_len();
@@ -430,7 +430,7 @@ impl ArchetypeRegistry {
 
     pub(crate) fn register(&mut self, key: ArchetypeKey, arch: Archetype) -> ArchetypeId {
         let id = self.dense.len();
-        let None = self.registry.insert(key, id) else {
+        let None = self.ids.insert(key, id) else {
             unreachable!("Attempted to register archetype twice: {:?}", key);
         };
         self.dense_keys.push(key);

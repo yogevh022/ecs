@@ -5,46 +5,46 @@ use std::any::{TypeId, type_name};
 use std::mem::MaybeUninit;
 use std::sync::OnceLock;
 
-pub(crate) const ARCHETYPE_KEY_WORD_BITS: u32 = usize::BITS;
-pub(crate) const ARCHETYPE_KEY_WORDS: u32 = 4;
-pub(crate) static COMPONENT_REGISTRY: OnceLock<RwLock<ComponentRegistry>> = OnceLock::new();
+pub(crate) const ARCHETYPE_KEY_WORD_BITS: usize = usize::BITS as usize;
+pub(crate) const ARCHETYPE_KEY_WORDS: usize = 4;
+pub(crate) static COMPONENTS: OnceLock<RwLock<Components>> = OnceLock::new();
 
-pub type ComponentId = u32;
+pub type ComponentId = usize;
 
 pub trait Component: Sized + 'static {
     fn component_id() -> ComponentId;
 }
 
-pub struct ComponentRegistry {
-    registry: FxHashMap<TypeId, ComponentId>,
-    storage_registry: Vec<BlobVecMeta>,
-    id_counter: u32,
+pub struct Components {
+    ids: FxHashMap<TypeId, ComponentId>,
+    storage: Vec<BlobVecMeta>,
+    id_counter: usize,
     built: bool,
 }
 
-impl ComponentRegistry {
+impl Components {
     pub fn new() -> Self {
         Self {
             id_counter: 1,
-            registry: FxHashMap::default(),
-            storage_registry: vec![unsafe { MaybeUninit::uninit().assume_init() }], // 0 item is null
+            ids: FxHashMap::default(),
+            storage: vec![unsafe { MaybeUninit::uninit().assume_init() }], // 0 item is null
             built: false,
         }
     }
 
     pub fn build(&mut self) {
-        debug_assert!(!self.built, "Attempted to build component registry twice!");
+        debug_assert!(!self.built, "Attempted to build components twice!");
         self.built = true;
     }
 
     pub(crate) fn register<T: Component>(&mut self) {
         debug_assert!(
             !self.built,
-            "Attempted to register component after building component registry!"
+            "Attempted to register a component after build!"
         );
         let type_id = TypeId::of::<T>();
         let id = self.next_id();
-        let None = self.registry.insert(type_id, id) else {
+        let None = self.ids.insert(type_id, id) else {
             panic!(
                 "Attempted to register component twice: {:?} (component_id: {:?}, type_id: {:?})",
                 type_name::<T>(),
@@ -52,15 +52,15 @@ impl ComponentRegistry {
                 type_id
             );
         };
-        self.storage_registry.push(BlobVecMeta::new::<T>());
+        self.storage.push(BlobVecMeta::new::<T>());
     }
 
-    pub(crate) fn component_id_of<T: Component>(&self) -> ComponentId {
-        self.registry[&TypeId::of::<T>()]
+    pub(crate) fn id_of<T: Component>(&self) -> ComponentId {
+        self.ids[&TypeId::of::<T>()]
     }
 
     pub(crate) fn storage_meta_of_id(&self, id: ComponentId) -> &BlobVecMeta {
-        &self.storage_registry[id as usize]
+        &self.storage[id]
     }
 
     // --- private ---
@@ -71,23 +71,22 @@ impl ComponentRegistry {
     }
 }
 
-pub(crate) fn component_registry_lock() -> &'static RwLock<ComponentRegistry> {
-    &COMPONENT_REGISTRY.get_or_init(|| RwLock::new(ComponentRegistry::new()))
+pub(crate) fn lock() -> &'static RwLock<Components> {
+    COMPONENTS.get_or_init(|| RwLock::new(Components::new()))
 }
 
-pub fn build_registry() {
+pub fn build() {
     // engine-only interface
-    component_registry_lock().write().build();
+    lock().write().build();
 }
-pub fn registry<'a>() -> RwLockReadGuard<'a, ComponentRegistry> {
-    component_registry_lock().read()
+
+pub fn get<'a>() -> RwLockReadGuard<'a, Components> {
+    lock().read()
 }
 
 #[macro_export]
 macro_rules! register_component {
     ($T:ty) => {
-        $crate::component::component_registry_lock()
-            .write()
-            .register::<$T>();
+        $crate::component::lock().write().register::<$T>();
     };
 }
