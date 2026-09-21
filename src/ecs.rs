@@ -132,9 +132,7 @@ impl Ecs {
         }
     }
 
-    pub fn query_filtered<Q: Queryable, F: QueryFilter>(
-        &mut self,
-    ) -> QueryIter<Q> {
+    pub fn query_filtered<Q: Queryable, F: QueryFilter>(&mut self) -> QueryIter<Q> {
         self.archetypes.query_filtered::<Q, F>()
     }
 

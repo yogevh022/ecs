@@ -5,7 +5,7 @@ mod archetype;
 pub mod component;
 mod ecs;
 mod query;
-
+mod event;
 static DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 macro_rules! timed {
