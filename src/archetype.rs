@@ -348,7 +348,7 @@ impl ArchetypeRegistry {
         this
     }
 
-    pub(crate) fn query_filtered<Q: Queryable<Key = ArchetypeKey>, F: QueryFilter>(&mut self) -> QueryIter<Q> {
+    pub(crate) fn query_filtered<Q: Queryable, F: QueryFilter>(&mut self) -> QueryIter<Q> {
         let with = Q::key() | F::include();
         let without = F::exclude();
         let mut iters: Vec<ArchetypeIter<Q>> = Vec::new();

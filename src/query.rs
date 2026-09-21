@@ -40,11 +40,10 @@ impl<A: QueryFilter, B: QueryFilter> QueryFilter for (A, B) {
 }
 
 pub trait Queryable {
-    type Key: Copy;
     type IterTuple<'a>;
     type ColumnTuple: Copy;
 
-    fn key() -> Self::Key;
+    fn key() -> ArchetypeKey;
     fn fetch_row<'a>(columns: Self::ColumnTuple, index: usize) -> Self::IterTuple<'a>;
     fn fetch_columns(archetype: &mut Archetype) -> Self::ColumnTuple;
 }

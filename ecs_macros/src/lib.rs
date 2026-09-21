@@ -41,12 +41,11 @@ pub fn impl_queryable_variadic_up_to(input: TokenStream) -> TokenStream {
 
         impls.push(quote! {
                 impl<#(#types: Component),*> Queryable for (#(#types,)*) {
-                    type Key = ArchetypeKey;
                     type IterTuple<'a> = (#(&'a mut #types,)*);
                     type ColumnTuple = (#(#blob_vecs,)*);
 
                     #[inline]
-                    fn key() -> Self::Key {
+                    fn key() -> ArchetypeKey {
                         let mut key = ArchetypeKey::EMPTY;
                         #(key = key.with::<#types>();)*
                         key
