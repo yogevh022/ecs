@@ -1,8 +1,9 @@
 use crate::archetype::{Archetype, ArchetypeId, ArchetypeKey, Archetypes};
 use crate::component::{Component, ComponentId};
 use crate::entity::{Entities, Entity, SparseEntity};
-use crate::query::{QueryFilter, QueryIter, Queryable};
+use crate::query::{QueryFilter, QueryIter, QueryState, Queryable};
 use std::any::Any;
+use crate::event::Events;
 
 pub(crate) struct ComponentBox {
     pub id: ComponentId,
@@ -47,6 +48,7 @@ impl EntityPrefab {
 
 pub struct Ecs {
     entities: Entities,
+    pub(crate) events: Events,
     archetypes: Archetypes,
 }
 
@@ -54,8 +56,13 @@ impl Ecs {
     pub fn new() -> Self {
         Self {
             entities: Entities::new(),
+            events: Events::new(),
             archetypes: Archetypes::new(),
         }
+    }
+
+    pub fn query_archetypes_state<Q: Queryable>(&mut self, state: &QueryState) -> QueryIter<Q> {
+        self.archetypes.query_state(state)
     }
 
     pub fn query_filtered<Q: Queryable, F: QueryFilter>(&mut self) -> QueryIter<Q> {

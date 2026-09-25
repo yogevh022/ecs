@@ -3,6 +3,8 @@ mod component;
 mod ecs;
 mod entity;
 mod query;
+mod event;
+mod system;
 
 pub mod prelude {
     pub use crate::component::Component; // component trait

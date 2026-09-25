@@ -7,6 +7,8 @@ mod ecs;
 mod entity;
 mod query;
 mod event;
+mod system;
+
 static DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 macro_rules! timed {

@@ -1,8 +1,12 @@
 use crate::archetype::{Archetype, ArchetypeIter, ArchetypeKey};
 use crate::component::Component;
+use crate::ecs::Ecs;
+use crate::system::SysParam;
 use blobvec::BlobVec;
 use ecs_macros::impl_queryable_variadic_up_to;
 use std::marker::PhantomData;
+
+impl_queryable_variadic_up_to!(16);
 
 pub trait QueryFilter {
     fn include() -> ArchetypeKey {
@@ -48,8 +52,6 @@ pub trait Queryable {
     fn fetch_columns(archetype: &mut Archetype) -> Self::ColumnTuple;
 }
 
-impl_queryable_variadic_up_to!(16);
-
 pub struct QueryIter<'e, Q: Queryable> {
     iters: Vec<ArchetypeIter<Q>>,
     current: usize,
@@ -84,5 +86,26 @@ impl<'e, Q: Queryable + 'e> Iterator for QueryIter<'e, Q> {
             self.current += 1;
         }
         None
+    }
+}
+
+pub struct QueryState {
+    pub with: ArchetypeKey,
+    pub without: ArchetypeKey,
+}
+
+pub struct Query<Q: Queryable, F: QueryFilter>(PhantomData<(Q, F)>);
+
+impl<Q: Queryable, F: QueryFilter> SysParam for Query<Q, F> {
+    type Item<'a> = QueryIter<'a, Q>;
+    type State = QueryState;
+    fn init(_ecs: &mut Ecs) -> Self::State {
+        QueryState {
+            with: Q::key() | F::include(),
+            without: F::exclude(),
+        }
+    }
+    fn fetch<'a>(ecs: *mut Ecs, state: &mut Self::State) -> Self::Item<'a> {
+        unsafe { (*ecs).query_archetypes_state::<Q>(state) }
     }
 }

@@ -94,3 +94,46 @@ pub fn impl_queryable_variadic_up_to(input: TokenStream) -> TokenStream {
     }
     .into()
 }
+
+#[proc_macro]
+pub fn impl_into_system_variadic_up_to(input: TokenStream) -> TokenStream {
+    let count: usize = parse_macro_input!(input as syn::LitInt)
+        .base10_parse()
+        .unwrap();
+
+    let mut impls = Vec::with_capacity(count);
+    let mut types = Vec::with_capacity(count);
+    let mut states = Vec::with_capacity(count);
+    let mut params = Vec::with_capacity(count);
+
+    for n in 1..=count {
+        types.clear();
+        states.clear();
+        params.clear();
+
+        types.extend((0..n).map(|i| quote::format_ident!("T{}", i)));
+        states.extend((0..n).map(|i| quote::format_ident!("s{}", i)));
+        params.extend((0..n).map(|i| quote::format_ident!("p{}", i)));
+
+        impls.push(quote! {
+                impl<F, #(#types,)*> IntoSystem<(#(#types,)*)> for F
+                where
+                    F: FnMut(#(#types::Item<'_>,)*) + 'static,
+                    #(#types: SysParam),*
+                {
+                    fn into_system(mut self, ecs: &mut Ecs) -> Box<dyn FnMut(*mut Ecs)> {
+                        #(let mut #states = #types::init(ecs);)*
+                        Box::new(move |ecs| {
+                            #(let #params = #types::fetch(ecs, &mut #states);)*
+                            self(#(#params,)*)
+                        })
+                    }
+                }
+        })
+    }
+
+    let expanded = quote! {
+        #(#impls)*
+    };
+    expanded.into()
+}

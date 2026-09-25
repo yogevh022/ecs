@@ -2,7 +2,7 @@ use crate::component;
 use crate::component::{ARCHETYPE_KEY_WORD_BITS, ARCHETYPE_KEY_WORDS, Component, ComponentId};
 use crate::ecs::ComponentBox;
 use crate::entity::Entity;
-use crate::query::{QueryFilter, QueryIter, Queryable};
+use crate::query::{QueryFilter, QueryIter, QueryState, Queryable};
 use blobvec::BlobVec;
 use rustc_hash::FxHashMap;
 use std::any::type_name;
@@ -347,6 +347,18 @@ impl Archetypes {
         };
         this.register(ArchetypeKey::EMPTY, Archetype::new());
         this
+    }
+
+    pub(crate) fn query_state<Q: Queryable>(&mut self, state: &QueryState) -> QueryIter<Q> {
+        let mut iters: Vec<ArchetypeIter<Q>> = Vec::new();
+        for i in 0..self.dense_keys.len() {
+            let arch_key = &self.dense_keys[i];
+            if arch_key.contains(&state.with) && arch_key.disjoint(&state.without) {
+                let arch = unsafe { self.dense.get_unchecked_mut(i) };
+                iters.push(arch.iter::<Q>());
+            }
+        }
+        QueryIter::new(iters)
     }
 
     pub(crate) fn query_filtered<Q: Queryable, F: QueryFilter>(&mut self) -> QueryIter<Q> {
