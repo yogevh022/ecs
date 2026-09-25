@@ -1,71 +1,8 @@
 use crate::archetype::{Archetype, ArchetypeId, ArchetypeKey, Archetypes};
 use crate::component::{Component, ComponentId};
+use crate::entity::{Entities, Entity, SparseEntity};
 use crate::query::{QueryFilter, QueryIter, Queryable};
-use std::any::{Any, type_name};
-use std::fmt::{Debug, Display};
-
-pub type EntityId = u32;
-
-#[derive(Clone, Copy)]
-pub struct Entity {
-    pub id: EntityId,
-    generation: u32,
-}
-
-impl Display for Entity {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Entity({})", self.id)
-    }
-}
-
-impl Debug for Entity {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self)
-    }
-}
-
-impl Entity {
-    pub fn new(id: EntityId, generation: u32) -> Self {
-        Self { id, generation }
-    }
-}
-
-struct EntityAllocator {
-    counter: u32,
-    generation: u32,
-    free_list: Vec<EntityId>,
-}
-
-impl EntityAllocator {
-    fn new() -> Self {
-        Self {
-            counter: 1,
-            generation: 0,
-            free_list: Vec::new(),
-        }
-    }
-
-    fn with_capacity(capacity: usize) -> Self {
-        let mut this = Self::new();
-        this.free_list.reserve(capacity);
-        this
-    }
-
-    fn alloc(&mut self) -> Entity {
-        if let Some(id) = self.free_list.pop() {
-            self.generation += 1;
-            Entity::new(id, self.generation)
-        } else {
-            let id = self.counter;
-            self.counter += 1;
-            Entity::new(id, self.generation)
-        }
-    }
-
-    fn free(&mut self, entity: Entity) {
-        self.free_list.push(entity.id);
-    }
-}
+use std::any::Any;
 
 pub(crate) struct ComponentBox {
     pub id: ComponentId,
@@ -108,26 +45,15 @@ impl EntityPrefab {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
-struct SparseEntity {
-    archetype_id: ArchetypeId,
-    generation: u32,
-    row: u32,
-}
-
 pub struct Ecs {
-    entity_allocator: EntityAllocator,
-    entities: Vec<Entity>,
-    entities_sparse: Vec<Option<SparseEntity>>,
+    entities: Entities,
     archetypes: Archetypes,
 }
 
 impl Ecs {
     pub fn new() -> Self {
         Self {
-            entity_allocator: EntityAllocator::new(),
-            entities: Vec::new(),
-            entities_sparse: vec![None], // reserved 0 for null entity
+            entities: Entities::new(),
             archetypes: Archetypes::new(),
         }
     }
@@ -149,7 +75,7 @@ impl Ecs {
     }
 
     pub fn add_component<T: Component>(&mut self, entity: Entity, component: T) {
-        let sparse_entity = self.get_sparse_entity(entity);
+        let sparse_entity = self.entities.location(entity);
         let old_id = sparse_entity.archetype_id;
         let old_row = sparse_entity.row;
         // SAFETY: every entity belongs to an archetype
@@ -171,13 +97,13 @@ impl Ecs {
             self.migrate_columns_with::<T>(old_id, new_id, old_row, component)
         };
 
-        let sparse_entity = unsafe { self.get_sparse_slot_unchecked_mut(entity.id) };
+        let sparse_entity = unsafe { self.entities.location_mut(entity.id) };
         sparse_entity.archetype_id = new_id;
         sparse_entity.row = entity_new_row;
     }
 
     pub fn remove_component<T: Component>(&mut self, entity: Entity) {
-        let sparse_entity = self.get_sparse_entity(entity);
+        let sparse_entity = self.entities.location(entity);
         let old_id = sparse_entity.archetype_id;
         let old_row = sparse_entity.row;
         // SAFETY: every entity belongs to an archetype
@@ -197,7 +123,7 @@ impl Ecs {
             self.migrate_columns_without::<T>(old_id, new_id, old_row)
         };
 
-        let sparse_entity = unsafe { self.get_sparse_slot_unchecked_mut(entity.id) };
+        let sparse_entity = unsafe { self.entities.location_mut(entity.id) };
         sparse_entity.archetype_id = new_id;
         sparse_entity.row = entity_new_row;
     }
@@ -214,22 +140,18 @@ impl Ecs {
             "Duplicate components found"
         );
 
-        let entity = self.entity_allocator.alloc();
+        let entity = self.entities.alloc();
         let (arch_id, row) = self
             .archetypes
             .register_or_push_row(entity, key, components);
-        let sparse_entity = Some(SparseEntity {
-            archetype_id: arch_id,
-            generation: entity.generation,
-            row: row as u32,
-        });
-        let entity_id = entity.id as usize;
-        if entity_id >= self.entities_sparse.len() {
-            self.entities_sparse.push(sparse_entity)
-        } else {
-            self.entities_sparse[entity_id] = sparse_entity;
-        }
-        self.entities.push(entity);
+        self.entities.insert(
+            entity,
+            SparseEntity {
+                archetype_id: arch_id,
+                generation: entity.generation,
+                row: row as u32,
+            },
+        );
         entity
     }
 
@@ -246,7 +168,7 @@ impl Ecs {
         new_arch.get_column_mut::<T>().push(component);
         if let Some(swapped_entity) = old_arch.move_row_into(src_row as usize, new_arch, None) {
             // SAFETY: if swapped_entity is Some, it must be a valid sparse entity index
-            unsafe { self.get_sparse_slot_unchecked_mut(swapped_entity.id).row = src_row };
+            unsafe { self.entities.location_mut(swapped_entity.id).row = src_row };
         }
         entity_new_row
     }
@@ -264,35 +186,8 @@ impl Ecs {
             old_arch.move_row_into(src_row as usize, new_arch, Some(T::component_id()))
         {
             // SAFETY: if swapped_entity is Some, it must be a valid sparse entity index
-            unsafe { self.get_sparse_slot_unchecked_mut(swapped_entity.id).row = src_row };
+            unsafe { self.entities.location_mut(swapped_entity.id).row = src_row };
         }
         entity_new_row
-    }
-
-    fn get_sparse_entity(&self, entity: Entity) -> SparseEntity {
-        debug_assert!(
-            entity.id < self.entities_sparse.len() as u32,
-            "Entity {} does not exist in ECS",
-            entity.id
-        );
-        let sparse_slot = unsafe {
-            // SAFETY: any entity.id is a valid sparse entity index, even if entity was despawned
-            self.entities_sparse
-                .get(entity.id as usize)
-                .unwrap_unchecked()
-        };
-        match sparse_slot {
-            Some(sparse_entity) if sparse_entity.generation == entity.generation => *sparse_entity,
-            _ => panic!("Entity {} does not exist in ECS", entity.id),
-        }
-    }
-
-    unsafe fn get_sparse_slot_unchecked_mut(&mut self, entity_id: EntityId) -> &mut SparseEntity {
-        unsafe {
-            self.entities_sparse
-                .get_unchecked_mut(entity_id as usize)
-                .as_mut()
-                .unwrap_unchecked()
-        }
     }
 }

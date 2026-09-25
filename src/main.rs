@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 mod archetype;
 pub mod component;
 mod ecs;
+mod entity;
 mod query;
 mod event;
 static DROP_COUNT: AtomicUsize = AtomicUsize::new(0);

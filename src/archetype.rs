@@ -1,6 +1,7 @@
 use crate::component;
 use crate::component::{ARCHETYPE_KEY_WORD_BITS, ARCHETYPE_KEY_WORDS, Component, ComponentId};
-use crate::ecs::{ComponentBox, Entity};
+use crate::ecs::ComponentBox;
+use crate::entity::Entity;
 use crate::query::{QueryFilter, QueryIter, Queryable};
 use blobvec::BlobVec;
 use rustc_hash::FxHashMap;
