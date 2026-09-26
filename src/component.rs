@@ -1,19 +1,14 @@
 use blobvec::BlobVecMeta;
-use parking_lot::{RwLock, RwLockReadGuard};
 use rustc_hash::FxHashMap;
 use std::any::{TypeId, type_name};
 use std::mem::MaybeUninit;
-use std::sync::OnceLock;
 
 pub(crate) const ARCHETYPE_KEY_WORD_BITS: usize = usize::BITS as usize;
 pub(crate) const ARCHETYPE_KEY_WORDS: usize = 4;
-pub(crate) static COMPONENTS: OnceLock<RwLock<Components>> = OnceLock::new();
 
 pub type ComponentId = usize;
 
-pub trait Component: Sized + 'static {
-    fn component_id() -> ComponentId;
-}
+pub trait Component: Sized + 'static {}
 
 pub struct Components {
     ids: FxHashMap<TypeId, ComponentId>,
@@ -69,24 +64,4 @@ impl Components {
         self.id_counter += 1;
         id
     }
-}
-
-pub(crate) fn lock() -> &'static RwLock<Components> {
-    COMPONENTS.get_or_init(|| RwLock::new(Components::new()))
-}
-
-pub fn build() {
-    // engine-only interface
-    lock().write().build();
-}
-
-pub fn get<'a>() -> RwLockReadGuard<'a, Components> {
-    lock().read()
-}
-
-#[macro_export]
-macro_rules! register_component {
-    ($T:ty) => {
-        $crate::component::lock().write().register::<$T>();
-    };
 }

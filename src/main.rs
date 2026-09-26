@@ -54,15 +54,14 @@ impl Drop for CompDrop {
     }
 }
 
-#[inline(never)]
-fn test_register() {
-    register_component!(CompA);
-    register_component!(CompB);
-    register_component!(CompC);
-    register_component!(CompD);
-    register_component!(CompE);
-    register_component!(CompF);
-    register_component!(CompDrop);
+fn register_world(world: &mut ecs::Ecs) {
+    world.register_component::<CompA>();
+    world.register_component::<CompB>();
+    world.register_component::<CompC>();
+    world.register_component::<CompD>();
+    world.register_component::<CompE>();
+    world.register_component::<CompF>();
+    world.register_component::<CompDrop>();
 }
 
 #[inline(never)]
@@ -326,6 +325,7 @@ fn sorted_ab(world: &mut ecs::Ecs) -> Vec<(f32, f32, f32)> {
 fn test_add_remove_correctness() {
     // overwrite stays in the same archetype
     let mut world = ecs::Ecs::new();
+    register_world(&mut world);
     let e = world.new_entity().with(CompA { value: 1.0 }).spawn();
     world.add_component(e, CompA { value: 9.0 });
     assert_eq!(sorted_a(&mut world), vec![9.0]);
@@ -337,6 +337,7 @@ fn test_add_remove_correctness() {
 
     // add to the middle row; source hole must be filled by the last entity
     let mut world = ecs::Ecs::new();
+    register_world(&mut world);
     let e0 = world.new_entity().with(CompA { value: 0.0 }).spawn();
     let e1 = world.new_entity().with(CompA { value: 1.0 }).spawn();
     let e2 = world.new_entity().with(CompA { value: 2.0 }).spawn();
@@ -360,6 +361,7 @@ fn test_add_remove_correctness() {
 
     // remove from the middle row; remaining A+B pairs must stay aligned
     let mut world = ecs::Ecs::new();
+    register_world(&mut world);
     let e0 = world
         .new_entity()
         .with(CompA { value: 0.0 })
@@ -404,6 +406,7 @@ fn test_add_remove_correctness() {
     DROP_COUNT.store(0, Ordering::Relaxed);
     {
         let mut world = ecs::Ecs::new();
+        register_world(&mut world);
         let d0 = world
             .new_entity()
             .with(CompDrop)
@@ -446,6 +449,7 @@ fn test_add_remove_correctness() {
 fn test_add_remove_batch() {
     const N: usize = 2000;
     let mut world = ecs::Ecs::new();
+    register_world(&mut world);
     let mut entities = Vec::with_capacity(N);
     for i in 0..N {
         entities.push(
@@ -525,14 +529,13 @@ fn test(world: &mut ecs::Ecs) {
 }
 
 fn main() {
+    let mut world = ecs::Ecs::new();
     print!("Registering components... ");
     let q = timed!({
-        test_register();
-        component::build();
+        register_world(&mut world);
     });
     print!("done in {:?}\n", q);
 
-    let mut world = ecs::Ecs::new();
     print!("spawning entities... ");
     let q = timed!({
         test_spawn(&mut world);

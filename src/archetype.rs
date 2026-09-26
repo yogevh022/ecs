@@ -1,12 +1,13 @@
 use crate::component;
-use crate::component::{ARCHETYPE_KEY_WORD_BITS, ARCHETYPE_KEY_WORDS, Component, ComponentId};
+use crate::component::{
+    ARCHETYPE_KEY_WORD_BITS, ARCHETYPE_KEY_WORDS, Component, ComponentId, Components,
+};
 use crate::ecs::ComponentBox;
 use crate::entity::Entity;
-use crate::query::{QueryFilter, Query, QueryState, Queryable};
+use crate::query::{Query, QueryFilter, QueryState, Queryable};
 use blobvec::BlobVec;
 use rustc_hash::FxHashMap;
 use std::any::type_name;
-use std::collections::hash_map::Entry;
 use std::fmt::Debug;
 use std::ops::BitOr;
 
@@ -16,16 +17,6 @@ pub type ArchetypeId = usize;
 pub struct ArchetypeKey(pub(crate) [usize; ARCHETYPE_KEY_WORDS]);
 impl ArchetypeKey {
     pub const EMPTY: ArchetypeKey = ArchetypeKey([0; ARCHETYPE_KEY_WORDS]);
-
-    #[inline]
-    pub fn with<T: Component>(self) -> Self {
-        self.with_id(T::component_id())
-    }
-
-    #[inline]
-    pub fn without<T: Component>(self) -> Self {
-        self.without_id(T::component_id())
-    }
 
     #[inline]
     fn bit_index(comp_id: ComponentId) -> (usize, usize) {
@@ -68,6 +59,11 @@ impl ArchetypeKey {
         true
     }
 
+    #[inline]
+    pub(crate) fn matches(&self, with: &Self, without: &Self) -> bool {
+        self.contains(with) && self.disjoint(without)
+    }
+
     pub fn component_count(&self) -> usize {
         self.0.iter().map(|word| word.count_ones() as usize).sum()
     }
@@ -102,6 +98,11 @@ pub struct Archetype {
 }
 
 impl Archetype {
+    /// First row slab for a new archetype. Large enough that a short spawn
+    /// burst does not grow immediately, small enough that a one-off archetype
+    /// does not hold a big empty allocation.
+    const INITIAL_ROWS: usize = 16;
+
     pub(crate) fn new() -> Self {
         Self {
             components: Vec::new(),
@@ -124,21 +125,26 @@ impl Archetype {
     }
 
     /// creates a new archetype with the given entity + components.
-    pub(crate) fn from_row(entity: Entity, component_boxes: Vec<ComponentBox>) -> Self {
-        let types = component::get();
-        let mut components = Vec::with_capacity(component_boxes.len());
+    pub(crate) fn from_row(
+        components: &Components,
+        entity: Entity,
+        component_boxes: Vec<ComponentBox>,
+    ) -> Self {
+        let mut columns = Vec::with_capacity(component_boxes.len());
         for comp_box in component_boxes {
-            let mut column = types.storage_meta_of_id(comp_box.id).instantiate();
-            column.reserve(4); // fixme arbitrary
+            let mut column = components.storage_meta_of_id(comp_box.id).instantiate();
+            column.reserve(Self::INITIAL_ROWS);
             let data_ptr = Box::into_raw(comp_box.data) as *mut u8;
             unsafe { column.push_from_ptr_unchecked(data_ptr) };
-            components.push((comp_box.id, column));
+            columns.push((comp_box.id, column));
         }
 
+        let mut entities = Vec::with_capacity(Self::INITIAL_ROWS);
+        entities.push(entity);
         Self {
-            components,
-            entities: vec![entity],
-            row_capacity: 1,
+            components: columns,
+            entities,
+            row_capacity: Self::INITIAL_ROWS,
         }
     }
 
@@ -151,48 +157,49 @@ impl Archetype {
     }
 
     fn grow_rows(&mut self) {
-        let additional = self.rows_len().max(4);
+        let additional = self.rows_len().max(Self::INITIAL_ROWS);
         self.reserve_rows(additional);
     }
 
     // --- ecs access ---
-    pub(crate) fn iter<Q: Queryable>(&mut self) -> ArchetypeIter<Q> {
+    pub(crate) fn iter<Q: Queryable>(
+        &mut self,
+        component_ids: Q::ComponentIds,
+    ) -> ArchetypeIter<Q> {
         let row_count = self.rows_len();
-        let columns = Q::fetch_columns(self);
+        let columns = Q::fetch_columns(self, component_ids);
         ArchetypeIter::new(columns, row_count)
     }
 
     // --- meta ---
     /// add column to archetype in place
-    pub(crate) fn add_column<T: Component>(&mut self) {
-        let comp_id = T::component_id();
+    pub(crate) fn add_column<T: Component>(&mut self, component_id: ComponentId) {
         debug_assert!(
-            self.try_get_column_index(comp_id).is_none(),
+            self.try_get_column_index(component_id).is_none(),
             "Component {} already exists in archetype",
             type_name::<T>()
         );
-        self.components.push((comp_id, BlobVec::new::<T>()));
+        self.components.push((component_id, BlobVec::new::<T>()));
     }
 
     /// remove column from archetype in place
-    pub(crate) fn remove_column<T: Component>(&mut self) {
-        let comp_id = T::component_id();
+    pub(crate) fn remove_column(&mut self, component_id: ComponentId) {
         debug_assert!(
-            self.try_get_column_index(comp_id).is_some(),
-            "Component {} does not exist in archetype",
-            type_name::<T>()
+            self.try_get_column_index(component_id).is_some(),
+            "ComponentId {} does not exist in archetype",
+            component_id
         );
-        let idx = self.get_column_index(comp_id);
+        let idx = self.get_column_index(component_id);
         self.components.swap_remove(idx);
     }
 
     // --- data ---
     /// push row of entity + components to archetype
-    pub(crate) fn push_row(&mut self, entity: Entity, components: Vec<ComponentBox>) {
+    pub(crate) fn push_row(&mut self, entity: Entity, component_boxes: Vec<ComponentBox>) {
         if self.rows_len() >= self.rows_capacity() {
             self.grow_rows();
         }
-        for comp_box in components {
+        for comp_box in component_boxes {
             let column = self.get_column_by_id_mut(comp_box.id);
             let data_ptr = Box::into_raw(comp_box.data) as *mut u8;
             unsafe { column.push_from_ptr_unchecked(data_ptr) };
@@ -242,18 +249,11 @@ impl Archetype {
     }
 
     // --- data ---
-    pub fn get_column<T: Component>(&self) -> &BlobVec {
-        let col_idx = self.get_column_index(T::component_id());
-        &self.components[col_idx].1
-    }
-
-    pub fn get_column_mut<T: Component>(&mut self) -> &mut BlobVec {
-        let col_idx = self.get_column_index(T::component_id());
-        &mut self.components[col_idx].1
-    }
-
-    pub(crate) fn set<T: Component>(&mut self, row: usize, value: T) {
-        *self.get_column_mut::<T>().get_mut(row).unwrap() = value;
+    pub(crate) fn set<T: Component>(&mut self, row: usize, value: T, component_id: ComponentId) {
+        *self
+            .get_column_by_id_mut(component_id)
+            .get_mut(row)
+            .unwrap() = value;
     }
 
     pub fn get_column_by_id(&self, component_id: ComponentId) -> &BlobVec {
@@ -324,24 +324,34 @@ impl Archetypes {
         this
     }
 
-    pub(crate) fn query_state<Q: Queryable, F: QueryFilter>(&mut self, state: &QueryState) -> Query<Q, F> {
+    pub(crate) fn query<Q: Queryable, F: QueryFilter>(
+        &mut self,
+        with: ArchetypeKey,
+        without: ArchetypeKey,
+        component_ids: Q::ComponentIds,
+    ) -> Query<Q, F> {
         let mut iters: Vec<ArchetypeIter<Q>> = Vec::new();
         for i in 0..self.dense_keys.len() {
-            let arch_key = &self.dense_keys[i];
-            if arch_key.contains(&state.with) && arch_key.disjoint(&state.without) {
+            if self.dense_keys[i].matches(&with, &without) {
                 let arch = unsafe { self.dense.get_unchecked_mut(i) };
-                iters.push(arch.iter::<Q>());
+                iters.push(arch.iter::<Q>(component_ids));
             }
         }
         Query::new(iters)
     }
 
-    pub(crate) fn query_filtered<Q: Queryable, F: QueryFilter>(&mut self) -> Query<Q, F> {
-        let state = QueryState {
-            with: Q::key() | F::include(),
-            without: F::exclude(),
-        };
-        self.query_state(&state)
+    pub(crate) fn query_state<Q: Queryable, F: QueryFilter>(
+        &mut self,
+        state: &mut QueryState<Q>,
+    ) -> Query<Q, F> {
+        state.update_matched(&self.dense_keys);
+        let mut iters: Vec<ArchetypeIter<Q>> = Vec::with_capacity(state.matched().len());
+        let component_ids = state.component_ids;
+        for &id in state.matched() {
+            let arch = unsafe { self.dense.get_unchecked_mut(id) };
+            iters.push(arch.iter::<Q>(component_ids));
+        }
+        Query::new(iters)
     }
 
     pub(crate) fn get_by_id(&self, id: ArchetypeId) -> Option<&Archetype> {
@@ -366,34 +376,6 @@ impl Archetypes {
 
     pub(crate) fn key_of(&self, id: ArchetypeId) -> Option<&ArchetypeKey> {
         self.dense_keys.get(id)
-    }
-
-    pub(crate) fn register_or_push_row(
-        &mut self,
-        entity: Entity,
-        key: ArchetypeKey,
-        components: Vec<ComponentBox>,
-    ) -> (ArchetypeId, usize) {
-        match self.ids.entry(key) {
-            Entry::Occupied(e) => {
-                let arch_id = *e.get();
-                let arch = unsafe {
-                    // SAFETY: key in ids == id in dense
-                    self.dense.get_unchecked_mut(arch_id)
-                };
-                let row = arch.rows_len();
-                arch.push_row(entity, components);
-                (arch_id, row)
-            }
-            Entry::Vacant(v) => {
-                let arch = Archetype::from_row(entity, components);
-                let id = self.dense.len();
-                self.dense_keys.push(key);
-                self.dense.push(arch);
-                v.insert(id);
-                (id, 0)
-            }
-        }
     }
 
     pub(crate) fn id_of_or_create_from(

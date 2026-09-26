@@ -1,9 +1,9 @@
 use crate::archetype::{Archetype, ArchetypeId, ArchetypeKey, Archetypes};
-use crate::component::{Component, ComponentId};
+use crate::component::{Component, ComponentId, Components};
 use crate::entity::{Entities, Entity, SparseEntity};
-use crate::query::{QueryFilter, Query, QueryState, Queryable};
+use crate::event::{Event, Events};
+use crate::query::{Query, QueryFilter, QueryState, Queryable};
 use std::any::Any;
-use crate::event::Events;
 
 pub(crate) struct ComponentBox {
     pub id: ComponentId,
@@ -25,7 +25,7 @@ impl<'e> EntityBuilder<'e> {
 
     pub fn with<T: Component>(mut self, component: T) -> Self {
         self.components.push(ComponentBox {
-            id: T::component_id(),
+            id: self.ecs.components.id_of::<T>(),
             data: Box::new(component),
         });
         self
@@ -48,6 +48,7 @@ impl EntityPrefab {
 
 pub struct Ecs {
     entities: Entities,
+    pub(crate) components: Components,
     pub(crate) events: Events,
     archetypes: Archetypes,
 }
@@ -56,21 +57,18 @@ impl Ecs {
     pub fn new() -> Self {
         Self {
             entities: Entities::new(),
+            components: Components::new(),
             events: Events::new(),
             archetypes: Archetypes::new(),
         }
     }
 
-    pub fn query_filtered<Q: Queryable, F: QueryFilter>(&mut self) -> Query<Q, F> {
-        self.archetypes.query_filtered::<Q, F>()
+    pub fn register_component<T: Component>(&mut self) {
+        self.components.register::<T>();
     }
 
-    pub fn query<Q: Queryable>(&mut self) -> Query<Q> {
-        self.query_filtered::<Q, ()>()
-    }
-
-    pub(crate) fn query_state<Q: Queryable, F: QueryFilter>(&mut self, state: &QueryState) -> Query<Q, F> {
-        self.archetypes.query_state(state)
+    pub fn register_event<E: Event>(&mut self) {
+        self.events.register::<E>();
     }
 
     pub fn new_entity(&'_ mut self) -> EntityBuilder<'_> {
@@ -87,17 +85,18 @@ impl Ecs {
         let old_row = sparse_entity.row;
         // SAFETY: every entity belongs to an archetype
         let old_key = unsafe { *self.archetypes.key_of(old_id as _).unwrap_unchecked() };
-        let new_key = old_key.with::<T>();
+        let component_id = self.components.id_of::<T>();
+        let new_key = old_key.with_id(component_id);
 
         if old_key == new_key {
             let arch = self.archetypes.get_by_id_mut(old_id).unwrap();
-            arch.set(old_row as usize, component);
+            arch.set(old_row as usize, component, component_id);
             return;
         }
 
-        let new_id =
-            self.archetypes
-                .id_of_or_create_from(old_id, new_key, Archetype::add_column::<T>);
+        let new_id = self.archetypes.id_of_or_create_from(old_id, new_key, |arch| {
+            arch.add_column::<T>(component_id);
+        });
 
         let entity_new_row = unsafe {
             // SAFETY: both old_id and new_id archetypes exist, confirmed above
@@ -115,15 +114,16 @@ impl Ecs {
         let old_row = sparse_entity.row;
         // SAFETY: every entity belongs to an archetype
         let old_key = unsafe { *self.archetypes.key_of(old_id as _).unwrap_unchecked() };
-        let new_key = old_key.without::<T>();
+        let component_id = self.components.id_of::<T>();
+        let new_key = old_key.without_id(component_id);
 
         if old_key == new_key {
             return; // component does not exist
         }
 
-        let new_id =
-            self.archetypes
-                .id_of_or_create_from(old_id, new_key, Archetype::remove_column::<T>);
+        let new_id = self.archetypes.id_of_or_create_from(old_id, new_key, |arch| {
+            arch.remove_column(component_id);
+        });
 
         let entity_new_row = unsafe {
             // SAFETY: both old_id and new_id archetypes exist, confirmed above
@@ -135,22 +135,49 @@ impl Ecs {
         sparse_entity.row = entity_new_row;
     }
 
+    pub fn query<Q: Queryable>(&mut self) -> Query<Q> {
+        self.query_filtered::<Q, ()>()
+    }
+
+    pub fn query_filtered<Q: Queryable, F: QueryFilter>(&mut self) -> Query<Q, F> {
+        let components = &self.components;
+        let component_ids = Q::component_ids(components);
+        let with = Q::key(component_ids) | F::include(components);
+        let without = F::exclude(components);
+        self.archetypes
+            .query::<Q, F>(with, without, component_ids)
+    }
+
+    pub(crate) fn query_state<Q: Queryable, F: QueryFilter>(
+        &mut self,
+        state: &mut QueryState<Q>,
+    ) -> Query<Q, F> {
+        self.archetypes.query_state(state)
+    }
+
     // --- private ---
-    fn spawn_with_components(&mut self, components: Vec<ComponentBox>) -> Entity {
+    fn spawn_with_components(&mut self, component_boxes: Vec<ComponentBox>) -> Entity {
         let mut key = ArchetypeKey::EMPTY;
-        for comp_box in &components {
+        for comp_box in &component_boxes {
             key = key.with_id(comp_box.id);
         }
         debug_assert_eq!(
             key.component_count(),
-            components.len(),
+            component_boxes.len(),
             "Duplicate components found"
         );
 
         let entity = self.entities.alloc();
-        let (arch_id, row) = self
-            .archetypes
-            .register_or_push_row(entity, key, components);
+        let (arch_id, row) = if let Some(arch_id) = self.archetypes.id_of(key) {
+            let arch = self.archetypes.get_by_id_mut(arch_id).unwrap();
+            let row = arch.rows_len();
+            arch.push_row(entity, component_boxes);
+            (arch_id, row)
+        } else {
+            let arch = Archetype::from_row(&self.components, entity, component_boxes);
+            let arch_id = self.archetypes.register(key, arch);
+            (arch_id, 0)
+        };
         self.entities.insert(
             entity,
             SparseEntity {
@@ -169,10 +196,11 @@ impl Ecs {
         src_row: u32,
         component: T,
     ) -> u32 {
+        let component_id = self.components.id_of::<T>();
         let [old_arch, new_arch] = unsafe { self.archetypes.get_two_by_ids_mut(src_id, dst_id) };
 
         let entity_new_row = new_arch.rows_len() as u32;
-        new_arch.get_column_mut::<T>().push(component);
+        new_arch.get_column_by_id_mut(component_id).push(component);
         if let Some(swapped_entity) = old_arch.move_row_into(src_row as usize, new_arch, None) {
             // SAFETY: if swapped_entity is Some, it must be a valid sparse entity index
             unsafe { self.entities.location_mut(swapped_entity.id).row = src_row };
@@ -189,9 +217,11 @@ impl Ecs {
         let [old_arch, new_arch] = unsafe { self.archetypes.get_two_by_ids_mut(src_id, dst_id) };
 
         let entity_new_row = new_arch.rows_len() as u32;
-        if let Some(swapped_entity) =
-            old_arch.move_row_into(src_row as usize, new_arch, Some(T::component_id()))
-        {
+        if let Some(swapped_entity) = old_arch.move_row_into(
+            src_row as usize,
+            new_arch,
+            Some(self.components.id_of::<T>()),
+        ) {
             // SAFETY: if swapped_entity is Some, it must be a valid sparse entity index
             unsafe { self.entities.location_mut(swapped_entity.id).row = src_row };
         }
