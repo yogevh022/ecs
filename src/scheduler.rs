@@ -1,9 +1,6 @@
 use crate::archetype::ArchetypeKey;
-use crate::event::{Event, EventR};
-use crate::query::{Query, With, Without};
 use crate::system::{IntoExclusiveSystem, IntoSystem, SystemDependencies, SystemFn};
 use crate::world::World;
-use ecs_macros::{Component, Event};
 use rayon::iter::ParallelIterator;
 use rayon::prelude::IntoParallelRefMutIterator;
 
@@ -97,28 +94,4 @@ impl Scheduler {
             sys_fn(world);
         }
     }
-}
-
-#[derive(Event)]
-struct TestE;
-
-#[derive(Component)]
-struct TestC;
-
-#[derive(Component)]
-struct TestD;
-
-#[derive(Component)]
-struct TestF;
-
-fn test2(q: EventR<TestE>, q2: Query<(TestC,), (With<(TestC, TestD)>, Without<TestF>)>) {}
-
-fn test_exc(world: *mut World) {}
-
-fn test() {
-    let mut world = World::new();
-    let mut scheduler = Scheduler::new(&world);
-
-    scheduler.add_system(&mut world, test2);
-    scheduler.add_exclusive_system(&mut world, test_exc);
 }

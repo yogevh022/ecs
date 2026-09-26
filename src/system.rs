@@ -2,8 +2,7 @@ use crate::archetype::ArchetypeKey;
 use crate::event::EventId;
 use crate::world::World;
 use ecs_macros::impl_into_system_variadic_up_to;
-use rustc_hash::FxHashMap;
-use std::ops::{BitOr, BitOrAssign};
+use std::ops::BitOrAssign;
 
 impl_into_system_variadic_up_to!(16);
 

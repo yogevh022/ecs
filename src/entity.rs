@@ -1,12 +1,18 @@
 use crate::archetype::ArchetypeId;
 use std::fmt::{Debug, Display};
 
-pub type EntityId = u32;
+pub(crate) type EntityId = u32;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub struct Entity {
-    pub id: EntityId,
+    pub(crate) id: EntityId,
     pub(crate) generation: u32,
+}
+
+impl Entity {
+    pub(crate) fn new(id: EntityId, generation: u32) -> Self {
+        Self { id, generation }
+    }
 }
 
 impl Display for Entity {
@@ -18,12 +24,6 @@ impl Display for Entity {
 impl Debug for Entity {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self)
-    }
-}
-
-impl Entity {
-    pub fn new(id: EntityId, generation: u32) -> Self {
-        Self { id, generation }
     }
 }
 

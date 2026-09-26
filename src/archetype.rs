@@ -1,4 +1,3 @@
-use crate::component;
 use crate::component::{
     ARCHETYPE_KEY_WORD_BITS, ARCHETYPE_KEY_WORDS, Component, ComponentId, Components,
 };
