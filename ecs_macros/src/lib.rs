@@ -17,16 +17,9 @@ pub fn derive_component(input: TokenStream) -> TokenStream {
 pub fn derive_event(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let name = &input.ident;
-    let id_ty = quote!(crate::event::EventId);
 
     quote! {
-        impl crate::event::Event for #name {
-            fn event_id() -> #id_ty {
-                static ID: std::sync::OnceLock<#id_ty> = std::sync::OnceLock::new();
-                0 // fixme
-                // *ID.get_or_init(|| crate::event::get().id_of::<Self>())
-            }
-        }
+        impl crate::event::Event for #name {}
     }
     .into()
 }
