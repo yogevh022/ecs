@@ -11,12 +11,12 @@ pub(crate) struct ComponentBox {
 }
 
 pub struct EntityBuilder<'e> {
-    ecs: &'e mut Ecs,
+    ecs: &'e mut World,
     components: Vec<ComponentBox>,
 }
 
 impl<'e> EntityBuilder<'e> {
-    fn new(ecs: &'e mut Ecs) -> Self {
+    fn new(ecs: &'e mut World) -> Self {
         Self {
             ecs,
             components: Vec::with_capacity(16), // arbitrary
@@ -46,14 +46,14 @@ impl EntityPrefab {
     }
 }
 
-pub struct Ecs {
+pub struct World {
     entities: Entities,
     pub(crate) components: Components,
     pub(crate) events: Events,
     archetypes: Archetypes,
 }
 
-impl Ecs {
+impl World {
     pub fn new() -> Self {
         Self {
             entities: Entities::new(),

@@ -1,6 +1,6 @@
 use crate::archetype::{Archetype, ArchetypeId, ArchetypeIter, ArchetypeKey};
 use crate::component::{Component, Components};
-use crate::ecs::Ecs;
+use crate::world::World;
 use crate::system::SysParam;
 use blobvec::BlobVec;
 use ecs_macros::{impl_component_group_variadic_up_to, impl_queryable_variadic_up_to};
@@ -140,10 +140,10 @@ impl<Q: Queryable> QueryState<Q> {
 impl<Q: Queryable + 'static, F: QueryFilter> SysParam for Query<'_, Q, F> {
     type Item<'a> = Query<'a, Q, F>;
     type State = QueryState<Q>;
-    fn init(ecs: &mut Ecs) -> Self::State {
+    fn init(ecs: &mut World) -> Self::State {
         QueryState::new::<F>(&ecs.components)
     }
-    fn fetch<'a>(ecs: *mut Ecs, state: &mut Self::State) -> Self::Item<'a> {
+    fn fetch<'a>(ecs: *mut World, state: &mut Self::State) -> Self::Item<'a> {
         unsafe { (*ecs).query_state::<Q, F>(state) }
     }
 }

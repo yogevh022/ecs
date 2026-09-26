@@ -156,7 +156,7 @@ pub fn impl_into_system_variadic_up_to(input: TokenStream) -> TokenStream {
                     F: FnMut(#(#types,)*) + FnMut(#(#types::Item<'_>,)*) + 'static,
                     #(#types: SysParam),*
                 {
-                    fn into_system(mut self, ecs: &mut Ecs) -> Box<dyn FnMut(*mut Ecs)> {
+                    fn into_system(mut self, ecs: &mut World) -> Box<dyn FnMut(*mut World)> {
                         #(let mut #states = #types::init(ecs);)*
                         Box::new(move |ecs| {
                             #(let #params = #types::fetch(ecs, &mut #states);)*

@@ -2,7 +2,7 @@ use erased_vec::ErasedVec;
 use rustc_hash::FxHashMap;
 use std::any::TypeId;
 use std::ops::Deref;
-use crate::ecs::Ecs;
+use crate::world::World;
 use crate::system::SysParam;
 
 pub struct EventW<E: Event>(*mut Vec<E>);
@@ -20,10 +20,10 @@ impl<E: Event> SysParam for EventW<E> {
     type Item<'a> = EventW<E>;
     type State = EventId;
 
-    fn init(ecs: &mut Ecs) -> Self::State {
+    fn init(ecs: &mut World) -> Self::State {
         ecs.events.id_of::<E>()
     }
-    fn fetch<'a>(ecs: *mut Ecs, state: &mut Self::State) -> Self::Item<'a> {
+    fn fetch<'a>(ecs: *mut World, state: &mut Self::State) -> Self::Item<'a> {
         unsafe {
             (*ecs).events.writer_id::<E>(*state)
         }
@@ -44,10 +44,10 @@ impl<E: Event> SysParam for EventR<E> {
     type Item<'a> = EventR<E>;
     type State = EventId;
 
-    fn init(ecs: &mut Ecs) -> Self::State {
+    fn init(ecs: &mut World) -> Self::State {
         ecs.events.id_of::<E>()
     }
-    fn fetch<'a>(ecs: *mut Ecs, state: &mut Self::State) -> Self::Item<'a> {
+    fn fetch<'a>(ecs: *mut World, state: &mut Self::State) -> Self::Item<'a> {
         unsafe {
             (*ecs).events.reader_id::<E>(*state)
         }

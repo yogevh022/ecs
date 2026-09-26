@@ -3,7 +3,7 @@ use query::{With, Without};
 use std::sync::atomic::{AtomicUsize, Ordering};
 mod archetype;
 pub mod component;
-mod ecs;
+mod world;
 mod entity;
 mod query;
 mod event;
@@ -54,7 +54,7 @@ impl Drop for CompDrop {
     }
 }
 
-fn register_world(world: &mut ecs::Ecs) {
+fn register_world(world: &mut world::World) {
     world.register_component::<CompA>();
     world.register_component::<CompB>();
     world.register_component::<CompC>();
@@ -65,7 +65,7 @@ fn register_world(world: &mut ecs::Ecs) {
 }
 
 #[inline(never)]
-fn test_spawn(world: &mut ecs::Ecs) {
+fn test_spawn(world: &mut world::World) {
     let mut q = 0;
     // Archetype: A only (1000 entities)
     for i in 0..1000 {
@@ -208,7 +208,7 @@ fn assert_count(label: &str, actual: usize, expected: usize) {
 }
 
 #[inline(never)]
-fn test_query(world: &mut ecs::Ecs) {
+fn test_query(world: &mut world::World) {
     // One spawn batch: A 1000, B 1000, A+B 2000, C+D 2000, A+C+D 1000,
     // A+B+C+D 1000, E 500, E+F 500, A+E+F 1000, B+E 500, A+B+E+F 500, C+D+E+F 500.
 
@@ -307,13 +307,13 @@ fn test_query(world: &mut ecs::Ecs) {
     );
 }
 
-fn sorted_a(world: &mut ecs::Ecs) -> Vec<f32> {
+fn sorted_a(world: &mut world::World) -> Vec<f32> {
     let mut values: Vec<f32> = world.query::<(CompA,)>().map(|(a,)| a.value).collect();
     values.sort_by(|a, b| a.partial_cmp(b).unwrap());
     values
 }
 
-fn sorted_ab(world: &mut ecs::Ecs) -> Vec<(f32, f32, f32)> {
+fn sorted_ab(world: &mut world::World) -> Vec<(f32, f32, f32)> {
     let mut values: Vec<_> = world
         .query::<(CompA, CompB)>()
         .map(|(a, b)| (a.value, b.x, b.y))
@@ -324,7 +324,7 @@ fn sorted_ab(world: &mut ecs::Ecs) -> Vec<(f32, f32, f32)> {
 
 fn test_add_remove_correctness() {
     // overwrite stays in the same archetype
-    let mut world = ecs::Ecs::new();
+    let mut world = world::World::new();
     register_world(&mut world);
     let e = world.new_entity().with(CompA { value: 1.0 }).spawn();
     world.add_component(e, CompA { value: 9.0 });
@@ -336,7 +336,7 @@ fn test_add_remove_correctness() {
     );
 
     // add to the middle row; source hole must be filled by the last entity
-    let mut world = ecs::Ecs::new();
+    let mut world = world::World::new();
     register_world(&mut world);
     let e0 = world.new_entity().with(CompA { value: 0.0 }).spawn();
     let e1 = world.new_entity().with(CompA { value: 1.0 }).spawn();
@@ -360,7 +360,7 @@ fn test_add_remove_correctness() {
     );
 
     // remove from the middle row; remaining A+B pairs must stay aligned
-    let mut world = ecs::Ecs::new();
+    let mut world = world::World::new();
     register_world(&mut world);
     let e0 = world
         .new_entity()
@@ -405,7 +405,7 @@ fn test_add_remove_correctness() {
 
     DROP_COUNT.store(0, Ordering::Relaxed);
     {
-        let mut world = ecs::Ecs::new();
+        let mut world = world::World::new();
         register_world(&mut world);
         let d0 = world
             .new_entity()
@@ -448,7 +448,7 @@ fn test_add_remove_correctness() {
 #[inline(never)]
 fn test_add_remove_batch() {
     const N: usize = 2000;
-    let mut world = ecs::Ecs::new();
+    let mut world = world::World::new();
     register_world(&mut world);
     let mut entities = Vec::with_capacity(N);
     for i in 0..N {
@@ -520,7 +520,7 @@ fn test_add_remove() {
 }
 
 #[inline(never)]
-fn test(world: &mut ecs::Ecs) {
+fn test(world: &mut world::World) {
     print!("querying... ");
     let q = timed!({
         test_query(world);
@@ -529,7 +529,7 @@ fn test(world: &mut ecs::Ecs) {
 }
 
 fn main() {
-    let mut world = ecs::Ecs::new();
+    let mut world = world::World::new();
     print!("Registering components... ");
     let q = timed!({
         register_world(&mut world);

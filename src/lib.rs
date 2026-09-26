@@ -1,6 +1,6 @@
 mod archetype;
 mod component;
-mod ecs;
+mod world;
 mod entity;
 mod query;
 mod event;
@@ -9,7 +9,7 @@ mod scheduler;
 
 pub mod prelude {
     pub use crate::component::Component; // component trait
-    pub use crate::ecs::{Ecs, EntityBuilder};
+    pub use crate::world::{World, EntityBuilder};
     pub use crate::entity::Entity;
     pub use ecs_macros::Component; // component derive
 }
