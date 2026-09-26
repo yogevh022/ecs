@@ -8,6 +8,7 @@ mod entity;
 mod query;
 mod event;
 mod system;
+mod scheduler;
 
 static DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
 
@@ -251,6 +252,13 @@ fn test_query(world: &mut ecs::Ecs) {
         ab_ef += 1;
     }
     assert_count("filtered (A, B) With<E>+With<F>", ab_ef, 500);
+    assert_count(
+        "filtered (A, B) With<(E, F)>",
+        world
+            .query_filtered::<(CompA, CompB), With<(CompE, CompF)>>()
+            .count(),
+        ab_ef,
+    );
 
     let mut ba_ef = 0;
     for (b, a) in world.query_filtered::<(CompB, CompA), (With<CompE>, With<CompF>)>() {

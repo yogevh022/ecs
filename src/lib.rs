@@ -5,6 +5,7 @@ mod entity;
 mod query;
 mod event;
 mod system;
+mod scheduler;
 
 pub mod prelude {
     pub use crate::component::Component; // component trait

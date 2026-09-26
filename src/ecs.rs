@@ -1,7 +1,7 @@
 use crate::archetype::{Archetype, ArchetypeId, ArchetypeKey, Archetypes};
 use crate::component::{Component, ComponentId};
 use crate::entity::{Entities, Entity, SparseEntity};
-use crate::query::{QueryFilter, QueryIter, QueryState, Queryable};
+use crate::query::{QueryFilter, Query, QueryState, Queryable};
 use std::any::Any;
 use crate::event::Events;
 
@@ -61,16 +61,16 @@ impl Ecs {
         }
     }
 
-    pub fn query_archetypes_state<Q: Queryable>(&mut self, state: &QueryState) -> QueryIter<Q> {
-        self.archetypes.query_state(state)
-    }
-
-    pub fn query_filtered<Q: Queryable, F: QueryFilter>(&mut self) -> QueryIter<Q> {
+    pub fn query_filtered<Q: Queryable, F: QueryFilter>(&mut self) -> Query<Q> {
         self.archetypes.query_filtered::<Q, F>()
     }
 
-    pub fn query<Q: Queryable>(&mut self) -> QueryIter<Q> {
+    pub fn query<Q: Queryable>(&mut self) -> Query<Q> {
         self.query_filtered::<Q, ()>()
+    }
+
+    pub(crate) fn query_state<Q: Queryable, F: QueryFilter>(&mut self, state: &QueryState) -> Query<Q, F> {
+        self.archetypes.query_state(state)
     }
 
     pub fn new_entity(&'_ mut self) -> EntityBuilder<'_> {

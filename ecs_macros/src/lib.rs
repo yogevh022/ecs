@@ -96,6 +96,36 @@ pub fn impl_queryable_variadic_up_to(input: TokenStream) -> TokenStream {
 }
 
 #[proc_macro]
+pub fn impl_component_group_variadic_up_to(input: TokenStream) -> TokenStream {
+    let count: usize = parse_macro_input!(input as syn::LitInt)
+        .base10_parse()
+        .unwrap();
+
+    let mut impls = Vec::with_capacity(count);
+    let mut types = Vec::with_capacity(count);
+
+    for n in 1..=count {
+        types.clear();
+        types.extend((0..n).map(|i| quote::format_ident!("T{}", i)));
+
+        impls.push(quote! {
+            impl<#(#types: Component),*> ComponentGroup for (#(#types,)*) {
+                fn key() -> ArchetypeKey {
+                    let mut key = ArchetypeKey::EMPTY;
+                    #(key = key.with::<#types>();)*
+                    key
+                }
+            }
+        });
+    }
+
+    quote! {
+        #(#impls)*
+    }
+    .into()
+}
+
+#[proc_macro]
 pub fn impl_into_system_variadic_up_to(input: TokenStream) -> TokenStream {
     let count: usize = parse_macro_input!(input as syn::LitInt)
         .base10_parse()
@@ -118,7 +148,7 @@ pub fn impl_into_system_variadic_up_to(input: TokenStream) -> TokenStream {
         impls.push(quote! {
                 impl<F, #(#types,)*> IntoSystem<(#(#types,)*)> for F
                 where
-                    F: FnMut(#(#types::Item<'_>,)*) + 'static,
+                    F: FnMut(#(#types,)*) + FnMut(#(#types::Item<'_>,)*) + 'static,
                     #(#types: SysParam),*
                 {
                     fn into_system(mut self, ecs: &mut Ecs) -> Box<dyn FnMut(*mut Ecs)> {

@@ -1,7 +1,9 @@
 use crate::ecs::Ecs;
 use ecs_macros::impl_into_system_variadic_up_to;
 
-impl_into_system_variadic_up_to!(3);
+impl_into_system_variadic_up_to!(16);
+
+pub type SystemFn = Box<dyn FnMut(*mut Ecs)>;
 
 pub trait SysParam {
     type Item<'a>;
@@ -11,5 +13,5 @@ pub trait SysParam {
 }
 
 pub trait IntoSystem<Marker> {
-    fn into_system(self, ecs: &mut Ecs) -> Box<dyn FnMut(*mut Ecs)>;
+    fn into_system(self, ecs: &mut Ecs) -> SystemFn;
 }

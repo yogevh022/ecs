@@ -2,7 +2,7 @@ use crate::component;
 use crate::component::{ARCHETYPE_KEY_WORD_BITS, ARCHETYPE_KEY_WORDS, Component, ComponentId};
 use crate::ecs::ComponentBox;
 use crate::entity::Entity;
-use crate::query::{QueryFilter, QueryIter, QueryState, Queryable};
+use crate::query::{QueryFilter, Query, QueryState, Queryable};
 use blobvec::BlobVec;
 use rustc_hash::FxHashMap;
 use std::any::type_name;
@@ -349,7 +349,7 @@ impl Archetypes {
         this
     }
 
-    pub(crate) fn query_state<Q: Queryable>(&mut self, state: &QueryState) -> QueryIter<Q> {
+    pub(crate) fn query_state<Q: Queryable, F: QueryFilter>(&mut self, state: &QueryState) -> Query<Q, F> {
         let mut iters: Vec<ArchetypeIter<Q>> = Vec::new();
         for i in 0..self.dense_keys.len() {
             let arch_key = &self.dense_keys[i];
@@ -358,10 +358,10 @@ impl Archetypes {
                 iters.push(arch.iter::<Q>());
             }
         }
-        QueryIter::new(iters)
+        Query::new(iters)
     }
 
-    pub(crate) fn query_filtered<Q: Queryable, F: QueryFilter>(&mut self) -> QueryIter<Q> {
+    pub(crate) fn query_filtered<Q: Queryable, F: QueryFilter>(&mut self) -> Query<Q> {
         let with = Q::key() | F::include();
         let without = F::exclude();
         let mut iters: Vec<ArchetypeIter<Q>> = Vec::new();
@@ -372,7 +372,7 @@ impl Archetypes {
                 iters.push(arch.iter::<Q>());
             }
         }
-        QueryIter::new(iters)
+        Query::new(iters)
     }
 
     pub(crate) fn get_by_id(&self, id: ArchetypeId) -> Option<&Archetype> {

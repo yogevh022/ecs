@@ -3,10 +3,11 @@ use crate::component::Component;
 use crate::ecs::Ecs;
 use crate::system::SysParam;
 use blobvec::BlobVec;
-use ecs_macros::impl_queryable_variadic_up_to;
+use ecs_macros::{impl_component_group_variadic_up_to, impl_queryable_variadic_up_to};
 use std::marker::PhantomData;
 
 impl_queryable_variadic_up_to!(16);
+impl_component_group_variadic_up_to!(16);
 
 pub trait QueryFilter {
     fn include() -> ArchetypeKey {
@@ -17,20 +18,30 @@ pub trait QueryFilter {
     }
 }
 
-pub struct With<T: Component>(PhantomData<T>);
-pub struct Without<T: Component>(PhantomData<T>);
+pub trait ComponentGroup {
+    fn key() -> ArchetypeKey;
+}
 
-impl QueryFilter for () {}
-
-impl<T: Component> QueryFilter for With<T> {
-    fn include() -> ArchetypeKey {
-        ArchetypeKey::EMPTY.with_id(T::component_id())
+impl<T: Component> ComponentGroup for T {
+    fn key() -> ArchetypeKey {
+        ArchetypeKey::EMPTY.with::<T>()
     }
 }
 
-impl<T: Component> QueryFilter for Without<T> {
+pub struct With<T: ComponentGroup>(PhantomData<T>);
+pub struct Without<T: ComponentGroup>(PhantomData<T>);
+
+impl QueryFilter for () {}
+
+impl<T: ComponentGroup> QueryFilter for With<T> {
+    fn include() -> ArchetypeKey {
+        T::key()
+    }
+}
+
+impl<T: ComponentGroup> QueryFilter for Without<T> {
     fn exclude() -> ArchetypeKey {
-        ArchetypeKey::EMPTY.with_id(T::component_id())
+        T::key()
     }
 }
 
@@ -52,13 +63,13 @@ pub trait Queryable {
     fn fetch_columns(archetype: &mut Archetype) -> Self::ColumnTuple;
 }
 
-pub struct QueryIter<'e, Q: Queryable> {
+pub struct Query<'e, Q: Queryable, F: QueryFilter = ()> {
     iters: Vec<ArchetypeIter<Q>>,
     current: usize,
-    _marker: PhantomData<&'e ()>,
+    _marker: PhantomData<(&'e (), F)>,
 }
 
-impl<'e, Q: Queryable> QueryIter<'e, Q> {
+impl<'e, Q: Queryable, F: QueryFilter> Query<'e, Q, F> {
     pub(crate) fn new(iters: Vec<ArchetypeIter<Q>>) -> Self {
         Self {
             iters,
@@ -68,7 +79,7 @@ impl<'e, Q: Queryable> QueryIter<'e, Q> {
     }
 }
 
-impl<'e, Q: Queryable + 'e> Iterator for QueryIter<'e, Q> {
+impl<'e, Q: Queryable + 'e, F: QueryFilter> Iterator for Query<'e, Q, F> {
     type Item = Q::IterTuple<'e>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -94,10 +105,8 @@ pub struct QueryState {
     pub without: ArchetypeKey,
 }
 
-pub struct Query<Q: Queryable, F: QueryFilter>(PhantomData<(Q, F)>);
-
-impl<Q: Queryable, F: QueryFilter> SysParam for Query<Q, F> {
-    type Item<'a> = QueryIter<'a, Q>;
+impl<Q: Queryable, F: QueryFilter> SysParam for Query<'_, Q, F> {
+    type Item<'a> = Query<'a, Q, F>;
     type State = QueryState;
     fn init(_ecs: &mut Ecs) -> Self::State {
         QueryState {
@@ -106,6 +115,6 @@ impl<Q: Queryable, F: QueryFilter> SysParam for Query<Q, F> {
         }
     }
     fn fetch<'a>(ecs: *mut Ecs, state: &mut Self::State) -> Self::Item<'a> {
-        unsafe { (*ecs).query_archetypes_state::<Q>(state) }
+        unsafe { (*ecs).query_state::<Q, F>(state) }
     }
 }
