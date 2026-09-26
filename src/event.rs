@@ -1,9 +1,9 @@
+use crate::system::{SysParam, SystemDependencies};
+use crate::world::World;
 use erased_vec::ErasedVec;
 use rustc_hash::FxHashMap;
 use std::any::TypeId;
 use std::ops::Deref;
-use crate::world::World;
-use crate::system::SysParam;
 
 pub struct EventW<E: Event>(*mut Vec<E>);
 
@@ -23,10 +23,11 @@ impl<E: Event> SysParam for EventW<E> {
     fn init(ecs: &mut World) -> Self::State {
         ecs.events.id_of::<E>()
     }
+    fn add_dependencies(sys_deps: &mut SystemDependencies, state: &mut Self::State) {
+        sys_deps.add_event_w(*state);
+    }
     fn fetch<'a>(ecs: *mut World, state: &mut Self::State) -> Self::Item<'a> {
-        unsafe {
-            (*ecs).events.writer::<E>(*state)
-        }
+        unsafe { (*ecs).events.writer::<E>(*state) }
     }
 }
 
@@ -47,10 +48,11 @@ impl<E: Event> SysParam for EventR<E> {
     fn init(ecs: &mut World) -> Self::State {
         ecs.events.id_of::<E>()
     }
+    fn add_dependencies(sys_deps: &mut SystemDependencies, state: &mut Self::State) {
+        sys_deps.add_event_r(*state);
+    }
     fn fetch<'a>(ecs: *mut World, state: &mut Self::State) -> Self::Item<'a> {
-        unsafe {
-            (*ecs).events.reader::<E>(*state)
-        }
+        unsafe { (*ecs).events.reader::<E>(*state) }
     }
 }
 

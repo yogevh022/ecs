@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 rustc-hash = "2.1.2"
+rayon = "1.12.0"
 ecs_macros = { path = "ecs_macros" }
 blobvec = { git = "https://github.com/yogevh022/blobvec" }
 erased_vec = { git = "https://github.com/yogevh022/erased_vec" }

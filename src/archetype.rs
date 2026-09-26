@@ -9,7 +9,7 @@ use blobvec::BlobVec;
 use rustc_hash::FxHashMap;
 use std::any::type_name;
 use std::fmt::Debug;
-use std::ops::BitOr;
+use std::ops::{BitAnd, BitOr, BitOrAssign};
 
 pub type ArchetypeId = usize;
 
@@ -69,12 +69,29 @@ impl ArchetypeKey {
     }
 }
 
+impl BitAnd for ArchetypeKey {
+    type Output = Self;
+
+    #[inline]
+    fn bitand(self, other: Self) -> Self {
+        Self(std::array::from_fn(|i| self.0[i] & other.0[i]))
+    }
+}
+
 impl BitOr for ArchetypeKey {
     type Output = Self;
 
     #[inline]
     fn bitor(self, other: Self) -> Self {
         Self(std::array::from_fn(|i| self.0[i] | other.0[i]))
+    }
+}
+
+impl BitOrAssign for ArchetypeKey {
+    fn bitor_assign(&mut self, rhs: Self) {
+        for (i, word) in rhs.0.iter().enumerate() {
+            self.0[i] |= *word;
+        }
     }
 }
 

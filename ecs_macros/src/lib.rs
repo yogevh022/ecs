@@ -144,19 +144,23 @@ pub fn impl_into_system_variadic_up_to(input: TokenStream) -> TokenStream {
         params.extend((0..n).map(|i| quote::format_ident!("p{}", i)));
 
         impls.push(quote! {
-                impl<F, #(#types,)*> IntoSystem<(#(#types,)*)> for F
-                where
-                    F: FnMut(#(#types,)*) + FnMut(#(#types::Item<'_>,)*) + 'static,
-                    #(#types: SysParam),*
-                {
-                    fn into_system(mut self, ecs: &mut World) -> Box<dyn FnMut(*mut World)> {
-                        #(let mut #states = #types::init(ecs);)*
-                        Box::new(move |ecs| {
-                            #(let #params = #types::fetch(ecs, &mut #states);)*
-                            self(#(#params,)*)
-                        })
-                    }
+            impl<F, #(#types,)*> IntoSystem<(#(#types,)*)> for F
+            where
+                F: FnMut(#(#types,)*) + FnMut(#(#types::Item<'_>,)*) + Send + 'static,
+                #(#types: SysParam, #types::State: Send),*
+            {
+                fn into_system(mut self, ecs: &mut World) -> (SystemFn, SystemDependencies) {
+                    #(let mut #states = #types::init(ecs);)*
+                    let mut deps = SystemDependencies::new();
+                    #(#types::add_dependencies(&mut deps, &mut #states);)*
+
+                    let sys_fn = Box::new(move |ecs| {
+                        #(let #params = #types::fetch(ecs, &mut #states);)*
+                        self(#(#params,)*)
+                    });
+                    (sys_fn, deps)
                 }
+            }
         })
     }
 

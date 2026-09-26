@@ -1,7 +1,7 @@
 use crate::archetype::{Archetype, ArchetypeId, ArchetypeIter, ArchetypeKey};
 use crate::component::{Component, Components};
+use crate::system::{SysParam, SystemDependencies};
 use crate::world::World;
-use crate::system::SysParam;
 use blobvec::BlobVec;
 use ecs_macros::{impl_component_group_variadic_up_to, impl_queryable_variadic_up_to};
 use std::marker::PhantomData;
@@ -62,7 +62,10 @@ pub trait Queryable {
     fn component_ids(components: &Components) -> Self::ComponentIds;
     fn key(component_ids: Self::ComponentIds) -> ArchetypeKey;
     fn fetch_row<'a>(columns: Self::ColumnTuple, index: usize) -> Self::IterTuple<'a>;
-    fn fetch_columns(archetype: &mut Archetype, component_ids: Self::ComponentIds) -> Self::ColumnTuple;
+    fn fetch_columns(
+        archetype: &mut Archetype,
+        component_ids: Self::ComponentIds,
+    ) -> Self::ColumnTuple;
 }
 
 pub struct Query<'e, Q: Queryable, F: QueryFilter = ()> {
@@ -105,6 +108,7 @@ impl<'e, Q: Queryable + 'e, F: QueryFilter> Iterator for Query<'e, Q, F> {
 pub struct QueryState<Q: Queryable> {
     pub with: ArchetypeKey,
     pub without: ArchetypeKey,
+    pub access: ArchetypeKey,
     pub component_ids: Q::ComponentIds,
     matched: Vec<ArchetypeId>,
     seen: usize,
@@ -113,9 +117,11 @@ pub struct QueryState<Q: Queryable> {
 impl<Q: Queryable> QueryState<Q> {
     pub(crate) fn new<F: QueryFilter>(components: &Components) -> Self {
         let component_ids = Q::component_ids(components);
+        let access = Q::key(component_ids);
         Self {
-            with: Q::key(component_ids) | F::include(components),
+            with: access | F::include(components),
             without: F::exclude(components),
+            access,
             component_ids,
             matched: Vec::new(),
             seen: 0,
@@ -142,6 +148,9 @@ impl<Q: Queryable + 'static, F: QueryFilter> SysParam for Query<'_, Q, F> {
     type State = QueryState<Q>;
     fn init(ecs: &mut World) -> Self::State {
         QueryState::new::<F>(&ecs.components)
+    }
+    fn add_dependencies(sys_deps: &mut SystemDependencies, state: &mut Self::State) {
+        sys_deps.add_components(state.access);
     }
     fn fetch<'a>(ecs: *mut World, state: &mut Self::State) -> Self::Item<'a> {
         unsafe { (*ecs).query_state::<Q, F>(state) }
