@@ -59,7 +59,7 @@ pub trait Event: Sized + 'static {
     fn event_id() -> EventId;
 }
 
-pub struct Events {
+pub(crate) struct Events {
     ids: FxHashMap<TypeId, EventId>,
     read: Vec<ErasedVec>,
     write: Vec<ErasedVec>,

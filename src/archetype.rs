@@ -28,19 +28,24 @@ impl ArchetypeKey {
     }
 
     #[inline]
-    pub fn with_id(mut self, comp_id: ComponentId) -> Self {
+    fn bit_index(comp_id: ComponentId) -> (usize, usize) {
         let component_bit = comp_id - 1;
-        let bit = component_bit % ARCHETYPE_KEY_WORD_BITS;
-        let word = component_bit / ARCHETYPE_KEY_WORD_BITS;
+        (
+            component_bit / ARCHETYPE_KEY_WORD_BITS,
+            component_bit % ARCHETYPE_KEY_WORD_BITS,
+        )
+    }
+
+    #[inline]
+    pub fn with_id(mut self, comp_id: ComponentId) -> Self {
+        let (word, bit) = Self::bit_index(comp_id);
         self.0[word] |= 1 << bit;
         self
     }
 
     #[inline]
     pub fn without_id(mut self, comp_id: ComponentId) -> Self {
-        let component_bit = comp_id - 1;
-        let bit = component_bit % ARCHETYPE_KEY_WORD_BITS;
-        let word = component_bit / ARCHETYPE_KEY_WORD_BITS;
+        let (word, bit) = Self::bit_index(comp_id);
         self.0[word] &= !(1 << bit);
         self
     }
@@ -226,9 +231,7 @@ impl Archetype {
         dst.entities.push(entity);
         self.entities.get(row).copied()
     }
-}
 
-impl Archetype {
     // --- meta ---
     pub fn rows_len(&self) -> usize {
         self.entities.len()
@@ -304,34 +307,6 @@ impl<Q: Queryable> ArchetypeIter<Q> {
     }
 }
 
-#[cfg(debug_assertions)]
-impl Debug for Archetype {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Archetype {{\n")?;
-        write!(f, "    components: [")?;
-        for (i, comp_name) in self
-            .components
-            .iter()
-            .map(|(_, comp)| comp.type_name())
-            .enumerate()
-        {
-            if i > 0 {
-                write!(f, ", ")?;
-            }
-            write!(f, "{:?}", comp_name)?;
-        }
-        write!(f, "],\n")?;
-        write!(f, "    entity_ids: [")?;
-        for (i, entity) in self.entities.iter().enumerate() {
-            if i > 0 {
-                write!(f, ", ")?;
-            }
-            write!(f, "{}", entity)?;
-        }
-        write!(f, "]\n}}")
-    }
-}
-
 pub struct Archetypes {
     ids: FxHashMap<ArchetypeKey, ArchetypeId>,
     dense: Vec<Archetype>,
@@ -361,18 +336,12 @@ impl Archetypes {
         Query::new(iters)
     }
 
-    pub(crate) fn query_filtered<Q: Queryable, F: QueryFilter>(&mut self) -> Query<Q> {
-        let with = Q::key() | F::include();
-        let without = F::exclude();
-        let mut iters: Vec<ArchetypeIter<Q>> = Vec::new();
-        for i in 0..self.dense_keys.len() {
-            let arch_key = &self.dense_keys[i];
-            if arch_key.contains(&with) && arch_key.disjoint(&without) {
-                let arch = unsafe { self.dense.get_unchecked_mut(i) };
-                iters.push(arch.iter::<Q>());
-            }
-        }
-        Query::new(iters)
+    pub(crate) fn query_filtered<Q: Queryable, F: QueryFilter>(&mut self) -> Query<Q, F> {
+        let state = QueryState {
+            with: Q::key() | F::include(),
+            without: F::exclude(),
+        };
+        self.query_state(&state)
     }
 
     pub(crate) fn get_by_id(&self, id: ArchetypeId) -> Option<&Archetype> {
@@ -457,5 +426,33 @@ impl Archetypes {
 
     pub(crate) fn iter_mut(&mut self) -> impl Iterator<Item = (&ArchetypeKey, &mut Archetype)> {
         self.dense_keys.iter().zip(self.dense.iter_mut())
+    }
+}
+
+#[cfg(debug_assertions)]
+impl Debug for Archetype {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Archetype {{\n")?;
+        write!(f, "    components: [")?;
+        for (i, comp_name) in self
+            .components
+            .iter()
+            .map(|(_, comp)| comp.type_name())
+            .enumerate()
+        {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{:?}", comp_name)?;
+        }
+        write!(f, "],\n")?;
+        write!(f, "    entity_ids: [")?;
+        for (i, entity) in self.entities.iter().enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{}", entity)?;
+        }
+        write!(f, "]\n}}")
     }
 }
