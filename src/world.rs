@@ -4,6 +4,9 @@ use crate::entity::{Entities, Entity, SparseEntity};
 use crate::event::{Event, Events};
 use crate::query::{Query, QueryFilter, QueryState, Queryable};
 use std::any::Any;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+static NEXT_WORLD_ID: AtomicUsize = AtomicUsize::new(1);
 
 pub(crate) struct ComponentBox {
     pub id: ComponentId,
@@ -47,6 +50,7 @@ impl EntityPrefab {
 }
 
 pub struct World {
+    id: usize,
     entities: Entities,
     pub(crate) components: Components,
     pub(crate) events: Events,
@@ -56,11 +60,16 @@ pub struct World {
 impl World {
     pub fn new() -> Self {
         Self {
+            id: NEXT_WORLD_ID.fetch_add(1, Ordering::Relaxed),
             entities: Entities::new(),
             components: Components::new(),
             events: Events::new(),
             archetypes: Archetypes::new(),
         }
+    }
+
+    pub(crate) fn id(&self) -> usize {
+        self.id
     }
 
     pub fn register_component<T: Component>(&mut self) {
