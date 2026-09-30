@@ -4,34 +4,6 @@ use crate::world::World;
 use rayon::iter::ParallelIterator;
 use rayon::prelude::IntoParallelRefMutIterator;
 
-// be careful with this.
-#[derive(Clone, Copy)]
-struct WorldPtr(*mut World);
-unsafe impl Send for WorldPtr {}
-unsafe impl Sync for WorldPtr {}
-
-impl WorldPtr {
-    fn get(self) -> *mut World {
-        self.0
-    }
-}
-
-struct DispatchGroup {
-    pub(crate) dependencies: SystemDependencies,
-    systems: Vec<SystemFn>,
-}
-
-impl DispatchGroup {
-    fn disjoint_dependencies(&self, deps: &SystemDependencies) -> bool {
-        self.dependencies.components() & deps.components() == ArchetypeKey::EMPTY
-            && self
-                .dependencies
-                .event_writes()
-                .iter()
-                .all(|id| !deps.event_writes().contains(id))
-    }
-}
-
 pub struct Scheduler {
     world_id: usize,
     dispatch_groups: Vec<DispatchGroup>,
@@ -80,6 +52,11 @@ impl Scheduler {
         });
     }
 
+    pub fn tick(&mut self, world: &mut World) {
+        self.run_dispatch_groups(world);
+        self.run_dispatch_exclusive(world);
+    }
+
     fn run_dispatch_groups(&mut self, world: &mut World) {
         let world = WorldPtr(world as *mut World);
         for group in self.dispatch_groups.iter_mut() {
@@ -93,5 +70,33 @@ impl Scheduler {
         for sys_fn in self.dispatch_exclusive.iter_mut() {
             sys_fn(world);
         }
+    }
+}
+
+struct DispatchGroup {
+    dependencies: SystemDependencies,
+    systems: Vec<SystemFn>,
+}
+
+impl DispatchGroup {
+    fn disjoint_dependencies(&self, deps: &SystemDependencies) -> bool {
+        self.dependencies.components() & deps.components() == ArchetypeKey::EMPTY
+            && self
+            .dependencies
+            .event_writes()
+            .iter()
+            .all(|id| !deps.event_writes().contains(id))
+    }
+}
+
+// be careful with this.
+#[derive(Clone, Copy)]
+struct WorldPtr(*mut World);
+unsafe impl Send for WorldPtr {}
+unsafe impl Sync for WorldPtr {}
+
+impl WorldPtr {
+    fn get(self) -> *mut World {
+        self.0
     }
 }
