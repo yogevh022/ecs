@@ -55,6 +55,7 @@ impl Scheduler {
     pub fn tick(&mut self, world: &mut World) {
         self.run_dispatch_groups(world);
         self.run_dispatch_exclusive(world);
+        world.events.swap_read_write();
     }
 
     fn run_dispatch_groups(&mut self, world: &mut World) {
