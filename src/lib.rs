@@ -8,7 +8,7 @@ mod system;
 mod world;
 
 pub use query::{ComponentGroup, QueryFilter, Queryable};
-pub use system::{IntoExclusiveSystem, IntoSystem, SysParam, SystemFn};
+pub use system::{IntoSystem, SysParam, SystemFn};
 
 pub mod prelude {
     pub use crate::component::Component;

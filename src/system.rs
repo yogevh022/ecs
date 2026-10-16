@@ -44,13 +44,3 @@ pub trait SysParam {
 pub trait IntoSystem<Marker> {
     fn into_system(self, ecs: &mut World) -> (SystemFn, SystemDependencies);
 }
-
-pub trait IntoExclusiveSystem {
-    fn into_exclusive_system(self) -> SystemFn;
-}
-
-impl<F> IntoExclusiveSystem for F where F: FnMut(*mut World) + Send + 'static {
-    fn into_exclusive_system(self) -> SystemFn {
-        Box::new(self)
-    }
-}

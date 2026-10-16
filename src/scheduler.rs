@@ -1,5 +1,5 @@
 use crate::archetype::ArchetypeKey;
-use crate::system::{IntoExclusiveSystem, IntoSystem, SystemDependencies, SystemFn};
+use crate::system::{IntoSystem, SystemDependencies, SystemFn};
 use crate::world::World;
 use rayon::iter::ParallelIterator;
 use rayon::prelude::IntoParallelRefMutIterator;
@@ -7,7 +7,6 @@ use rayon::prelude::IntoParallelRefMutIterator;
 pub struct Scheduler {
     world_id: usize,
     dispatch_groups: Vec<DispatchGroup>,
-    dispatch_exclusive: Vec<SystemFn>,
 }
 
 impl Scheduler {
@@ -15,7 +14,6 @@ impl Scheduler {
         Self {
             world_id: world.id(),
             dispatch_groups: Vec::new(),
-            dispatch_exclusive: Vec::new(),
         }
     }
 
@@ -23,11 +21,6 @@ impl Scheduler {
         self.debug_assert_bound(world);
         let (sys_fn, sys_deps) = system.into_system(world);
         self.assign_to_dispatch_group(sys_fn, sys_deps);
-    }
-
-    pub fn add_exclusive_system<F: IntoExclusiveSystem>(&mut self, world: &mut World, system: F) {
-        self.debug_assert_bound(world);
-        self.dispatch_exclusive.push(system.into_exclusive_system());
     }
 
     fn debug_assert_bound(&self, world: &World) {
@@ -54,7 +47,6 @@ impl Scheduler {
 
     pub fn tick(&mut self, world: &mut World) {
         self.run_dispatch_groups(world);
-        self.run_dispatch_exclusive(world);
         world.events.flush();
     }
 
@@ -64,12 +56,6 @@ impl Scheduler {
             group.systems.par_iter_mut().for_each(move |sys_fn| {
                 sys_fn(world.get());
             });
-        }
-    }
-
-    fn run_dispatch_exclusive(&mut self, world: &mut World) {
-        for sys_fn in self.dispatch_exclusive.iter_mut() {
-            sys_fn(world);
         }
     }
 }
