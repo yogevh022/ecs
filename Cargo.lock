@@ -59,8 +59,8 @@ checksum = "252afb9ae5eaa683babdc6a068b3f5726eb19e05070c731f9b2a23a7c3e8ed34"
 
 [[package]]
 name = "erased_vec"
-version = "0.1.0"
-source = "git+https://github.com/yogevh022/erased_vec#a3b5bd180e49b45e47c61a0c3cd650713a95d51b"
+version = "0.1.2"
+source = "git+https://github.com/yogevh022/erased_vec#1899778ae2a45ca11c6da1bc99f3ac104715e598"
 
 [[package]]
 name = "proc-macro2"

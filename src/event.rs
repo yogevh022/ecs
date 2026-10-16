@@ -5,6 +5,11 @@ use rustc_hash::FxHashMap;
 use std::any::TypeId;
 use std::ops::Deref;
 
+pub struct EventState {
+    event_id: EventId,
+    writer_id: WriterId,
+}
+
 pub struct EventW<E: Event>(*mut Vec<E>);
 
 impl<E: Event> EventW<E> {
@@ -18,16 +23,17 @@ impl<E: Event> EventW<E> {
 
 impl<E: Event> SysParam for EventW<E> {
     type Item<'a> = EventW<E>;
-    type State = EventId;
+    type State = EventState;
 
     fn init(ecs: &mut World) -> Self::State {
-        ecs.events.id_of::<E>()
+        EventState {
+            event_id: ecs.events.id_of::<E>(),
+            writer_id: ecs.events.add_writer::<E>(),
+        }
     }
-    fn add_dependencies(sys_deps: &mut SystemDependencies, state: &mut Self::State) {
-        sys_deps.add_event_w(*state);
-    }
+    fn add_dependencies(_sys_deps: &mut SystemDependencies, _state: &mut Self::State) {}
     fn fetch<'a>(ecs: *mut World, state: &mut Self::State) -> Self::Item<'a> {
-        unsafe { (*ecs).events.writer::<E>(*state) }
+        unsafe { (*ecs).events.writer::<E>(state.event_id, state.writer_id) }
     }
 }
 
@@ -48,56 +54,70 @@ impl<E: Event> SysParam for EventR<E> {
     fn init(ecs: &mut World) -> Self::State {
         ecs.events.id_of::<E>()
     }
-    fn add_dependencies(sys_deps: &mut SystemDependencies, state: &mut Self::State) {
-        sys_deps.add_event_r(*state);
-    }
+    fn add_dependencies(_sys_deps: &mut SystemDependencies, _state: &mut Self::State) {}
     fn fetch<'a>(ecs: *mut World, state: &mut Self::State) -> Self::Item<'a> {
         unsafe { (*ecs).events.reader::<E>(*state) }
     }
 }
 
-pub type EventId = usize;
+pub(crate) type EventId = u32;
+pub(crate) type WriterId = u32;
 pub trait Event: Sized + 'static {}
+
+struct EventSlot {
+    read: ErasedVec,
+    writes: Vec<ErasedVec>,
+    flush: fn(&mut ErasedVec, &mut [ErasedVec]),
+}
 
 pub(crate) struct Events {
     ids: FxHashMap<TypeId, EventId>,
-    read: Vec<ErasedVec>,
-    write: Vec<ErasedVec>,
+    slots: Vec<EventSlot>,
 }
 
 impl Events {
     pub(crate) fn new() -> Self {
         Self {
             ids: FxHashMap::default(),
-            read: Vec::new(),
-            write: Vec::new(),
+            slots: Vec::new(),
         }
     }
 
     pub(crate) fn register<E: Event>(&mut self) {
-        let index = self.read.len();
-        let None = self.ids.insert(TypeId::of::<E>(), index) else {
+        let index = self.slots.len();
+        let None = self.ids.insert(TypeId::of::<E>(), index as EventId) else {
             panic!("Event {:?} already registered", std::any::type_name::<E>());
         };
-        self.read.push(ErasedVec::from(Vec::<E>::new()));
-        self.write.push(ErasedVec::from(Vec::<E>::new()));
+        self.slots.push(EventSlot {
+            read: ErasedVec::from(Vec::<E>::new()),
+            writes: Vec::new(),
+            flush: flush_slot::<E>,
+        });
     }
 
-    pub(crate) fn swap_read_write(&mut self) {
-        std::mem::swap(&mut self.read, &mut self.write);
-        for ev in self.write.iter_mut() {
-            ev.clear();
-        }
+    pub(crate) fn add_writer<E: Event>(&mut self) -> WriterId {
+        let event_id = self.id_of::<E>();
+        let writes = &mut self.slots[event_id as usize].writes;
+        let writer_id = writes.len() as WriterId;
+        writes.push(ErasedVec::from(Vec::<E>::new()));
+        writer_id
     }
 
-    pub(crate) fn reader<E: Event>(&self, id: EventId) -> EventR<E> {
-        let slice: &[E] = self.read[id].get();
+    pub(crate) fn writer<E: Event>(&mut self, event_id: EventId, writer_id: WriterId) -> EventW<E> {
+        let writes = &mut self.slots[event_id as usize].writes;
+        EventW(writes[writer_id as usize].get_mut())
+    }
+
+    pub(crate) fn reader<E: Event>(&self, event_id: EventId) -> EventR<E> {
+        let slice: &[E] = self.slots[event_id as usize].read.get();
         EventR(slice as *const [E])
     }
 
-    pub(crate) fn writer<E: Event>(&mut self, id: EventId) -> EventW<E> {
-        let vec: &mut Vec<E> = self.write[id].get_mut();
-        EventW(vec as *mut Vec<E>)
+    pub(crate) fn flush(&mut self) {
+        for slot in &mut self.slots {
+            let flush = slot.flush;
+            flush(&mut slot.read, &mut slot.writes);
+        }
     }
 
     pub(crate) fn id_of<E: Event>(&self) -> EventId {
@@ -105,108 +125,152 @@ impl Events {
     }
 }
 
+fn flush_slot<E: Event>(read: &mut ErasedVec, writes: &mut [ErasedVec]) {
+    match writes {
+        [] => read.clear(),
+        [writer] => {
+            std::mem::swap(read.get_mut::<E>(), writer.get_mut::<E>());
+            writer.clear();
+        }
+        writers => {
+            let total = writers.iter().map(|writer| writer.get::<E>().len()).sum();
+            let read = read.get_mut::<E>();
+            read.clear();
+            read.reserve(total);
+            for writer in writers {
+                read.append(writer.get_mut::<E>());
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
-    #[derive(Debug, PartialEq)]
-    struct Hit(i32);
-    #[derive(Debug, PartialEq)]
-    struct Died(u32);
+    struct Ping(u32);
+    impl Event for Ping {}
 
-    impl Event for Hit {}
-    impl Event for Died {}
+    struct Pong(u8);
+    impl Event for Pong {}
 
-    fn registered() -> Events {
-        let mut events = Events::new();
-        events.register::<Hit>();
-        events.register::<Died>();
-        events
-    }
-
-    #[test]
-    fn register_assigns_dense_ids_in_order() {
-        let events = registered();
-        assert_eq!(events.id_of::<Hit>(), 0);
-        assert_eq!(events.id_of::<Died>(), 1);
-    }
-
-    #[test]
-    #[should_panic(expected = "already registered")]
-    fn register_twice_panics() {
-        let mut events = Events::new();
-        events.register::<Hit>();
-        events.register::<Hit>();
-    }
-
-    #[test]
-    fn writes_stay_hidden_until_swap() {
-        let mut events = registered();
-        let id = events.id_of::<Hit>();
-        events.writer::<Hit>(id).push(Hit(1));
-        assert!(events.reader::<Hit>(id).is_empty());
-
-        events.swap_read_write();
-        assert_eq!(&*events.reader::<Hit>(id), &[Hit(1)]);
-        assert!(events.reader::<Hit>(id).iter().eq([Hit(1)].iter()));
-    }
-
-    #[test]
-    fn swap_clears_the_write_buffer() {
-        let mut events = registered();
-        let id = events.id_of::<Hit>();
-        events.writer::<Hit>(id).push(Hit(1));
-        events.swap_read_write();
-
-        events.writer::<Hit>(id).extend([Hit(2), Hit(3)]);
-        events.swap_read_write();
-        assert_eq!(&*events.reader::<Hit>(id), &[Hit(2), Hit(3)]);
-    }
-
-    #[test]
-    fn idle_frame_does_not_republish_old_events() {
-        let mut events = registered();
-        let id = events.id_of::<Hit>();
-        events.writer::<Hit>(id).push(Hit(1));
-        events.swap_read_write();
-        assert_eq!(events.reader::<Hit>(id).len(), 1);
-
-        events.swap_read_write();
-        assert!(events.reader::<Hit>(id).is_empty());
-    }
-
-    #[test]
-    fn event_types_do_not_share_a_queue() {
-        let mut events = registered();
-        let hits = events.id_of::<Hit>();
-        let deaths = events.id_of::<Died>();
-        {
-            let mut hit_w = events.writer::<Hit>(hits);
-            let mut died_w = events.writer::<Died>(deaths);
-            hit_w.push(Hit(4));
-            died_w.extend([Died(8), Died(9)]);
+    struct DropPing(Arc<AtomicUsize>);
+    impl Event for DropPing {}
+    impl Drop for DropPing {
+        fn drop(&mut self) {
+            self.0.fetch_add(1, Ordering::SeqCst);
         }
-        events.swap_read_write();
-        assert_eq!(&*events.reader::<Hit>(hits), &[Hit(4)]);
-        assert_eq!(&*events.reader::<Died>(deaths), &[Died(8), Died(9)]);
+    }
+
+    fn values(events: &Events, id: EventId) -> Vec<u32> {
+        events.reader::<Ping>(id).iter().map(|ping| ping.0).collect()
     }
 
     #[test]
-    fn reader_sees_last_frame_while_writer_fills_this_frame() {
-        let mut events = registered();
-        let id = events.id_of::<Hit>();
-        events.writer::<Hit>(id).push(Hit(1));
-        events.swap_read_write();
+    fn writer_ids_are_per_event() {
+        let mut events = Events::new();
+        events.register::<Ping>();
+        events.register::<Pong>();
 
-        let read = events.reader::<Hit>(id);
-        let mut write = events.writer::<Hit>(id);
-        assert_eq!(&*read, &[Hit(1)]);
-        write.push(Hit(2));
-        assert_eq!(&*read, &[Hit(1)]);
-        drop(write);
-        drop(read);
+        assert_eq!(events.add_writer::<Ping>(), 0);
+        assert_eq!(events.add_writer::<Pong>(), 0);
+        assert_eq!(events.add_writer::<Ping>(), 1);
+    }
 
-        events.swap_read_write();
-        assert_eq!(&*events.reader::<Hit>(id), &[Hit(2)]);
+    #[test]
+    fn one_writer_publishes_then_clears() {
+        let mut events = Events::new();
+        events.register::<Ping>();
+        let id = events.id_of::<Ping>();
+        let writer_id = events.add_writer::<Ping>();
+
+        events.writer::<Ping>(id, writer_id).push(Ping(1));
+        events.writer::<Ping>(id, writer_id).push(Ping(2));
+        events.flush();
+        assert_eq!(values(&events, id), vec![1, 2]);
+
+        events.flush();
+        assert!(values(&events, id).is_empty());
+    }
+
+    #[test]
+    fn many_writers_merge_in_registration_order() {
+        let mut events = Events::new();
+        events.register::<Ping>();
+        let id = events.id_of::<Ping>();
+        let first = events.add_writer::<Ping>();
+        let second = events.add_writer::<Ping>();
+
+        events.writer::<Ping>(id, second).push(Ping(3));
+        events.writer::<Ping>(id, first).extend([Ping(1), Ping(2)]);
+        events.flush();
+        assert_eq!(values(&events, id), vec![1, 2, 3]);
+
+        events.writer::<Ping>(id, first).push(Ping(4));
+        events.flush();
+        assert_eq!(values(&events, id), vec![4]);
+    }
+
+    #[test]
+    fn flush_keeps_event_types_apart() {
+        let mut events = Events::new();
+        events.register::<Ping>();
+        events.register::<Pong>();
+        let ping_id = events.id_of::<Ping>();
+        let pong_id = events.id_of::<Pong>();
+        let ping_writer = events.add_writer::<Ping>();
+        let pong_writer = events.add_writer::<Pong>();
+
+        events.writer::<Ping>(ping_id, ping_writer).push(Ping(9));
+        events.writer::<Pong>(pong_id, pong_writer).push(Pong(4));
+        events.flush();
+
+        assert_eq!(values(&events, ping_id), vec![9]);
+        assert_eq!(
+            events
+                .reader::<Pong>(pong_id)
+                .iter()
+                .map(|pong| pong.0)
+                .collect::<Vec<_>>(),
+            vec![4]
+        );
+    }
+
+    #[test]
+    fn flush_drops_previous_read_once() {
+        let drops = Arc::new(AtomicUsize::new(0));
+        let mut events = Events::new();
+        events.register::<DropPing>();
+        let id = events.id_of::<DropPing>();
+        let writer_id = events.add_writer::<DropPing>();
+
+        events
+            .writer::<DropPing>(id, writer_id)
+            .push(DropPing(Arc::clone(&drops)));
+        events.flush();
+        assert_eq!(drops.load(Ordering::SeqCst), 0);
+        assert_eq!(events.reader::<DropPing>(id).len(), 1);
+
+        events.flush();
+        assert_eq!(drops.load(Ordering::SeqCst), 1);
+        assert!(events.reader::<DropPing>(id).is_empty());
+    }
+
+    #[test]
+    fn registered_event_with_no_writer_clears() {
+        let drops = Arc::new(AtomicUsize::new(0));
+        let mut events = Events::new();
+        events.register::<DropPing>();
+        let id = events.id_of::<DropPing>();
+        events.slots[id as usize]
+            .read
+            .get_mut::<DropPing>()
+            .push(DropPing(Arc::clone(&drops)));
+
+        events.flush();
+        assert_eq!(drops.load(Ordering::SeqCst), 1);
+        assert!(events.reader::<DropPing>(id).is_empty());
     }
 }

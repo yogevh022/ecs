@@ -55,7 +55,7 @@ impl Scheduler {
     pub fn tick(&mut self, world: &mut World) {
         self.run_dispatch_groups(world);
         self.run_dispatch_exclusive(world);
-        world.events.swap_read_write();
+        world.events.flush();
     }
 
     fn run_dispatch_groups(&mut self, world: &mut World) {
@@ -82,11 +82,6 @@ struct DispatchGroup {
 impl DispatchGroup {
     fn disjoint_dependencies(&self, deps: &SystemDependencies) -> bool {
         self.dependencies.components() & deps.components() == ArchetypeKey::EMPTY
-            && self
-            .dependencies
-            .event_writes()
-            .iter()
-            .all(|id| !deps.event_writes().contains(id))
     }
 }
 
