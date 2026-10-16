@@ -9,6 +9,7 @@ mod query;
 mod event;
 mod system;
 mod scheduler;
+mod resource;
 
 static DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
 
