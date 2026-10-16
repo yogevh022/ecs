@@ -6,6 +6,7 @@ mod query;
 mod scheduler;
 mod system;
 mod world;
+mod resource;
 
 pub use query::{ComponentGroup, QueryFilter, Queryable};
 pub use system::{IntoSystem, SysParam, SystemFn};

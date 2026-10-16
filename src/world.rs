@@ -5,6 +5,7 @@ use crate::event::{Event, Events};
 use crate::query::{Query, QueryFilter, QueryState, Queryable};
 use std::any::Any;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use crate::resource::Resources;
 
 static NEXT_WORLD_ID: AtomicUsize = AtomicUsize::new(1);
 
@@ -54,6 +55,7 @@ pub struct World {
     entities: Entities,
     pub(crate) components: Components,
     pub(crate) events: Events,
+    pub(crate) resources: Resources,
     archetypes: Archetypes,
 }
 
@@ -64,6 +66,7 @@ impl World {
             entities: Entities::new(),
             components: Components::new(),
             events: Events::new(),
+            resources: Resources::new(),
             archetypes: Archetypes::new(),
         }
     }
