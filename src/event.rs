@@ -5,6 +5,10 @@ use rustc_hash::FxHashMap;
 use std::any::TypeId;
 use std::ops::Deref;
 
+pub(crate) type EventId = u32;
+pub(crate) type WriterId = u32;
+pub trait Event: Sized + 'static {}
+
 pub struct EventState {
     event_id: EventId,
     writer_id: WriterId,
@@ -60,10 +64,6 @@ impl<E: Event> SysParam for EventR<E> {
     }
 }
 
-pub(crate) type EventId = u32;
-pub(crate) type WriterId = u32;
-pub trait Event: Sized + 'static {}
-
 struct EventSlot {
     read: ErasedVec,
     writes: Vec<ErasedVec>,
@@ -73,6 +73,7 @@ struct EventSlot {
 pub(crate) struct Events {
     ids: FxHashMap<TypeId, EventId>,
     slots: Vec<EventSlot>,
+    built: bool,
 }
 
 impl Events {
@@ -80,10 +81,17 @@ impl Events {
         Self {
             ids: FxHashMap::default(),
             slots: Vec::new(),
+            built: false,
         }
     }
 
+    pub(crate) fn build(&mut self) {
+        assert!(!self.built, "Attempted to build events twice");
+        self.built = true;
+    }
+
     pub(crate) fn register<E: Event>(&mut self) {
+        assert!(!self.built, "Attempted to register an event after build");
         let index = self.slots.len();
         let None = self.ids.insert(TypeId::of::<E>(), index as EventId) else {
             panic!("Event {:?} already registered", std::any::type_name::<E>());
@@ -96,6 +104,7 @@ impl Events {
     }
 
     pub(crate) fn add_writer<E: Event>(&mut self) -> WriterId {
+        assert!(!self.built, "Attempted to add an event writer after build");
         let event_id = self.id_of::<E>();
         let writes = &mut self.slots[event_id as usize].writes;
         let writer_id = writes.len() as WriterId;

@@ -28,15 +28,12 @@ impl Components {
     }
 
     pub fn build(&mut self) {
-        debug_assert!(!self.built, "Attempted to build components twice!");
+        assert!(!self.built, "Attempted to build components twice");
         self.built = true;
     }
 
     pub(crate) fn register<T: Component>(&mut self) {
-        debug_assert!(
-            !self.built,
-            "Attempted to register a component after build!"
-        );
+        assert!(!self.built, "Attempted to register a component after build");
         let type_id = TypeId::of::<T>();
         let id = self.next_id();
         let None = self.ids.insert(type_id, id) else {

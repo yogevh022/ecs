@@ -43,16 +43,16 @@ impl SystemDependencies {
     }
 }
 
-fn overlaps(a: &[ResourceId], b: &[ResourceId]) -> bool {
-    a.iter().any(|id| b.contains(id))
-}
-
 impl BitOrAssign for SystemDependencies {
     fn bitor_assign(&mut self, rhs: Self) {
         self.components |= rhs.components;
         self.resource_reads.extend_from_slice(&rhs.resource_reads);
         self.resource_writes.extend_from_slice(&rhs.resource_writes);
     }
+}
+
+fn overlaps(a: &[ResourceId], b: &[ResourceId]) -> bool {
+    a.iter().any(|id| b.contains(id))
 }
 
 pub trait SysParam {

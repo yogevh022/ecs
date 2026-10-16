@@ -4,6 +4,8 @@ use rustc_hash::FxHashMap;
 use std::any::{Any, TypeId};
 use std::ops::{Deref, DerefMut};
 
+pub type ResourceId = u32;
+
 pub struct ResState {
     id: ResourceId,
     ptr: *mut (),
@@ -82,11 +84,10 @@ impl<T: Any> SysParam for ResR<T> {
     }
 }
 
-pub type ResourceId = u32;
-
 pub struct Resources {
     storage: Vec<Box<dyn Any>>,
     ids: FxHashMap<TypeId, ResourceId>,
+    built: bool,
 }
 
 impl Resources {
@@ -94,10 +95,17 @@ impl Resources {
         Self {
             storage: Vec::new(),
             ids: FxHashMap::default(),
+            built: false,
         }
     }
 
+    pub(crate) fn build(&mut self) {
+        assert!(!self.built, "Attempted to build resources twice");
+        self.built = true;
+    }
+
     pub(crate) fn add_resource<T: Any>(&mut self, resource: T) {
+        assert!(!self.built, "Attempted to add a resource after build");
         let id = TypeId::of::<T>();
         let None = self.ids.insert(id, self.storage.len() as ResourceId) else {
             panic!("Resource already exists: {:?}", std::any::type_name::<T>())

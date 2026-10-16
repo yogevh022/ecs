@@ -52,6 +52,7 @@ impl EntityPrefab {
 
 pub struct World {
     id: usize,
+    built: bool,
     entities: Entities,
     pub(crate) components: Components,
     pub(crate) events: Events,
@@ -63,12 +64,25 @@ impl World {
     pub fn new() -> Self {
         Self {
             id: NEXT_WORLD_ID.fetch_add(1, Ordering::Relaxed),
+            built: false,
             entities: Entities::new(),
             components: Components::new(),
             events: Events::new(),
             resources: Resources::new(),
             archetypes: Archetypes::new(),
         }
+    }
+
+    pub fn build(&mut self) {
+        assert!(!self.built, "world already built");
+        self.built = true;
+        self.components.build();
+        self.events.build();
+        self.resources.build();
+    }
+
+    pub(crate) fn is_built(&self) -> bool {
+        self.built
     }
 
     pub(crate) fn id(&self) -> usize {
@@ -238,5 +252,59 @@ impl World {
             unsafe { self.entities.location_mut(swapped_entity.id).row = src_row };
         }
         entity_new_row
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::component::Component;
+    use crate::event::Event;
+
+    struct Marker;
+    impl Component for Marker {}
+
+    struct Boom;
+    impl Event for Boom {}
+
+    #[test]
+    #[should_panic(expected = "world already built")]
+    fn build_twice_panics() {
+        let mut world = World::new();
+        world.build();
+        world.build();
+    }
+
+    #[test]
+    #[should_panic(expected = "register a component after build")]
+    fn register_component_after_build_panics() {
+        let mut world = World::new();
+        world.build();
+        world.register_component::<Marker>();
+    }
+
+    #[test]
+    #[should_panic(expected = "register an event after build")]
+    fn register_event_after_build_panics() {
+        let mut world = World::new();
+        world.build();
+        world.register_event::<Boom>();
+    }
+
+    #[test]
+    #[should_panic(expected = "add a resource after build")]
+    fn add_resource_after_build_panics() {
+        let mut world = World::new();
+        world.build();
+        world.resources.add_resource(1u32);
+    }
+
+    #[test]
+    #[should_panic(expected = "add an event writer after build")]
+    fn add_event_writer_after_build_panics() {
+        let mut world = World::new();
+        world.register_event::<Boom>();
+        world.build();
+        world.events.add_writer::<Boom>();
     }
 }

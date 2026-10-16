@@ -17,17 +17,25 @@ impl Scheduler {
     }
 
     pub fn add_system<M, F: IntoSystem<M>>(&mut self, world: &mut World, system: F) {
-        self.debug_assert_bound(world);
-        let (sys_fn, sys_deps) = system.into_system(world);
-        self.assign_to_dispatch_group(sys_fn, sys_deps);
-    }
-
-    fn debug_assert_bound(&self, world: &World) {
-        debug_assert_eq!(
+        assert_eq!(
             self.world_id,
             world.id(),
             "must be called on the bound World"
         );
+        assert!(!world.is_built(), "cannot add a system after build");
+        let (sys_fn, sys_deps) = system.into_system(world);
+        self.assign_to_dispatch_group(sys_fn, sys_deps);
+    }
+
+    pub fn tick(&mut self, world: &mut World) {
+        assert_eq!(
+            self.world_id,
+            world.id(),
+            "must be called on the bound World"
+        );
+        assert!(world.is_built(), "world must be built before tick");
+        self.run_dispatch_groups(world);
+        world.events.flush();
     }
 
     fn assign_to_dispatch_group(&mut self, sys_fn: SystemFn, deps: SystemDependencies) {
@@ -42,11 +50,6 @@ impl Scheduler {
             dependencies: deps,
             systems: vec![sys_fn],
         });
-    }
-
-    pub fn tick(&mut self, world: &mut World) {
-        self.run_dispatch_groups(world);
-        world.events.flush();
     }
 
     fn run_dispatch_groups(&mut self, world: &mut World) {
@@ -114,6 +117,7 @@ mod tests {
 
         assert_eq!(scheduler.dispatch_groups.len(), 1);
         assert_eq!(scheduler.dispatch_groups[0].systems.len(), 2);
+        world.build();
         scheduler.tick(&mut world);
         let mut values = seen.lock().unwrap().clone();
         values.sort();
@@ -136,6 +140,7 @@ mod tests {
         });
 
         assert_eq!(scheduler.dispatch_groups.len(), 2);
+        world.build();
         scheduler.tick(&mut world);
         assert_eq!(seen.load(Ordering::SeqCst), 9);
         assert_eq!(score_value(&mut world), 9);
@@ -157,6 +162,7 @@ mod tests {
         });
 
         assert_eq!(scheduler.dispatch_groups.len(), 2);
+        world.build();
         scheduler.tick(&mut world);
         assert_eq!(seen.load(Ordering::SeqCst), 1);
         assert_eq!(score_value(&mut world), 9);
@@ -176,6 +182,7 @@ mod tests {
         });
 
         assert_eq!(scheduler.dispatch_groups.len(), 2);
+        world.build();
         scheduler.tick(&mut world);
         assert_eq!(score_value(&mut world), 11);
     }
@@ -198,6 +205,7 @@ mod tests {
 
         assert_eq!(scheduler.dispatch_groups.len(), 1);
         assert_eq!(scheduler.dispatch_groups[0].systems.len(), 2);
+        world.build();
         scheduler.tick(&mut world);
         assert_eq!(score_value(&mut world), 5);
         assert_eq!(seen.load(Ordering::SeqCst), 4);
@@ -221,12 +229,28 @@ mod tests {
                 .push(events.iter().map(|event| event.0).collect::<Vec<_>>());
         });
 
+        world.build();
         scheduler.tick(&mut world);
         scheduler.tick(&mut world);
-        assert_eq!(
-            seen.lock().unwrap().as_slice(),
-            [Vec::new(), vec![4]]
-        );
+        assert_eq!(seen.lock().unwrap().as_slice(), [Vec::new(), vec![4]]);
+    }
+
+    #[test]
+    #[should_panic(expected = "cannot add a system after build")]
+    fn add_system_after_build_panics() {
+        let mut world = World::new();
+        world.resources.add_resource(Score(0));
+        let mut scheduler = Scheduler::new(&world);
+        world.build();
+        scheduler.add_system(&mut world, |_score: ResR<Score>| {});
+    }
+
+    #[test]
+    #[should_panic(expected = "world must be built before tick")]
+    fn tick_before_build_panics() {
+        let mut world = World::new();
+        let mut scheduler = Scheduler::new(&world);
+        scheduler.tick(&mut world);
     }
 
     fn score_value(world: &mut World) -> i32 {

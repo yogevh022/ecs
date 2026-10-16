@@ -10,7 +10,7 @@ use std::any::type_name;
 use std::fmt::Debug;
 use std::ops::{BitAnd, BitOr, BitOrAssign};
 
-pub type ArchetypeId = usize;
+pub type ArchetypeId = u32;
 
 #[derive(PartialEq, Eq, Hash, Clone, Copy)]
 pub struct ArchetypeKey(pub(crate) [usize; ARCHETYPE_KEY_WORDS]);
@@ -297,6 +297,34 @@ impl Archetype {
     }
 }
 
+#[cfg(debug_assertions)]
+impl Debug for Archetype {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Archetype {{\n")?;
+        write!(f, "    components: [")?;
+        for (i, comp_name) in self
+            .components
+            .iter()
+            .map(|(_, comp)| comp.type_name())
+            .enumerate()
+        {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{:?}", comp_name)?;
+        }
+        write!(f, "],\n")?;
+        write!(f, "    entity_ids: [")?;
+        for (i, entity) in self.entities.iter().enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{}", entity)?;
+        }
+        write!(f, "]\n}}")
+    }
+}
+
 pub struct ArchetypeIter<Q: Queryable> {
     columns: Q::ColumnTuple,
     index: usize,
@@ -364,18 +392,18 @@ impl Archetypes {
         let mut iters: Vec<ArchetypeIter<Q>> = Vec::with_capacity(state.matched().len());
         let component_ids = state.component_ids;
         for &id in state.matched() {
-            let arch = unsafe { self.dense.get_unchecked_mut(id) };
+            let arch = unsafe { self.dense.get_unchecked_mut(id as usize) };
             iters.push(arch.iter::<Q>(component_ids));
         }
         Query::new(iters)
     }
 
     pub(crate) fn get_by_id(&self, id: ArchetypeId) -> Option<&Archetype> {
-        self.dense.get(id)
+        self.dense.get(id as usize)
     }
 
     pub(crate) fn get_by_id_mut(&mut self, id: ArchetypeId) -> Option<&mut Archetype> {
-        self.dense.get_mut(id)
+        self.dense.get_mut(id as usize)
     }
 
     pub(crate) unsafe fn get_two_by_ids_mut(
@@ -383,7 +411,7 @@ impl Archetypes {
         id1: ArchetypeId,
         id2: ArchetypeId,
     ) -> [&mut Archetype; 2] {
-        unsafe { self.dense.get_disjoint_unchecked_mut([id1, id2]) }
+        unsafe { self.dense.get_disjoint_unchecked_mut([id1 as usize, id2 as usize]) }
     }
 
     pub(crate) fn id_of(&self, key: ArchetypeKey) -> Option<ArchetypeId> {
@@ -391,7 +419,7 @@ impl Archetypes {
     }
 
     pub(crate) fn key_of(&self, id: ArchetypeId) -> Option<&ArchetypeKey> {
-        self.dense_keys.get(id)
+        self.dense_keys.get(id as usize)
     }
 
     pub(crate) fn id_of_or_create_from(
@@ -409,7 +437,7 @@ impl Archetypes {
     }
 
     pub(crate) fn register(&mut self, key: ArchetypeKey, arch: Archetype) -> ArchetypeId {
-        let id = self.dense.len();
+        let id = self.dense.len() as ArchetypeId;
         let None = self.ids.insert(key, id) else {
             unreachable!("Attempted to register archetype twice: {:?}", key);
         };
@@ -424,33 +452,5 @@ impl Archetypes {
 
     pub(crate) fn iter_mut(&mut self) -> impl Iterator<Item = (&ArchetypeKey, &mut Archetype)> {
         self.dense_keys.iter().zip(self.dense.iter_mut())
-    }
-}
-
-#[cfg(debug_assertions)]
-impl Debug for Archetype {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Archetype {{\n")?;
-        write!(f, "    components: [")?;
-        for (i, comp_name) in self
-            .components
-            .iter()
-            .map(|(_, comp)| comp.type_name())
-            .enumerate()
-        {
-            if i > 0 {
-                write!(f, ", ")?;
-            }
-            write!(f, "{:?}", comp_name)?;
-        }
-        write!(f, "],\n")?;
-        write!(f, "    entity_ids: [")?;
-        for (i, entity) in self.entities.iter().enumerate() {
-            if i > 0 {
-                write!(f, ", ")?;
-            }
-            write!(f, "{}", entity)?;
-        }
-        write!(f, "]\n}}")
     }
 }

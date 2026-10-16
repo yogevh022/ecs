@@ -132,7 +132,7 @@ impl<Q: Queryable> QueryState<Q> {
         for id in self.seen..keys.len() {
             let key = &keys[id];
             if key.matches(&self.with, &self.without) {
-                self.matched.push(id);
+                self.matched.push(id as ArchetypeId);
             }
         }
         self.seen = keys.len();
