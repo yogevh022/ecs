@@ -8,7 +8,7 @@ pub(crate) const ARCHETYPE_KEY_WORDS: usize = 4;
 
 pub type ComponentId = usize;
 
-pub trait Component: Sized + 'static {}
+pub trait Component: Sized + Clone + 'static {}
 
 pub struct Components {
     ids: FxHashMap<TypeId, ComponentId>,

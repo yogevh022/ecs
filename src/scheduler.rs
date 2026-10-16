@@ -102,7 +102,7 @@ mod tests {
     #[test]
     fn readers_of_one_resource_share_a_group() {
         let mut world = World::new();
-        world.resources.add_resource(Score(3));
+        world.register_resource(Score(3));
         let mut scheduler = Scheduler::new(&world);
         let seen = Arc::new(Mutex::new(Vec::new()));
         let first = Arc::clone(&seen);
@@ -127,7 +127,7 @@ mod tests {
     #[test]
     fn writer_runs_before_a_later_reader() {
         let mut world = World::new();
-        world.resources.add_resource(Score(1));
+        world.register_resource(Score(1));
         let mut scheduler = Scheduler::new(&world);
         let seen = Arc::new(AtomicI32::new(-1));
         let seen_in_system = Arc::clone(&seen);
@@ -149,7 +149,7 @@ mod tests {
     #[test]
     fn reader_scheduled_first_sees_the_old_value() {
         let mut world = World::new();
-        world.resources.add_resource(Score(1));
+        world.register_resource(Score(1));
         let mut scheduler = Scheduler::new(&world);
         let seen = Arc::new(AtomicI32::new(-1));
         let seen_in_system = Arc::clone(&seen);
@@ -171,7 +171,7 @@ mod tests {
     #[test]
     fn writers_of_the_same_resource_do_not_share_a_group() {
         let mut world = World::new();
-        world.resources.add_resource(Score(0));
+        world.register_resource(Score(0));
         let mut scheduler = Scheduler::new(&world);
 
         scheduler.add_system(&mut world, |mut score: ResW<Score>| {
@@ -190,8 +190,8 @@ mod tests {
     #[test]
     fn different_resources_can_run_in_one_system_and_one_group() {
         let mut world = World::new();
-        world.resources.add_resource(Score(1));
-        world.resources.add_resource(Lives(4));
+        world.register_resource(Score(1));
+        world.register_resource(Lives(4));
         let mut scheduler = Scheduler::new(&world);
         let seen = Arc::new(AtomicI32::new(-1));
         let seen_in_system = Arc::clone(&seen);
@@ -239,7 +239,7 @@ mod tests {
     #[should_panic(expected = "cannot add a system after build")]
     fn add_system_after_build_panics() {
         let mut world = World::new();
-        world.resources.add_resource(Score(0));
+        world.register_resource(Score(0));
         let mut scheduler = Scheduler::new(&world);
         world.build();
         scheduler.add_system(&mut world, |_score: ResR<Score>| {});

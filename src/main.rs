@@ -22,32 +22,32 @@ macro_rules! timed {
     }};
 }
 
-#[derive(Component, Debug)]
+#[derive(Component, Clone, Debug)]
 struct CompA {
     value: f32,
 }
-#[derive(Component, Debug)]
+#[derive(Component, Clone, Debug)]
 struct CompB {
     x: f32,
     y: f32,
 }
-#[derive(Component, Debug)]
+#[derive(Component, Clone, Debug)]
 struct CompC {
     rex: &'static str,
 }
-#[derive(Component, Debug)]
+#[derive(Component, Clone, Debug)]
 struct CompD {
     name: &'static str,
 }
-#[derive(Component, Debug)]
+#[derive(Component, Clone, Debug)]
 struct CompE {
     health: i32,
 }
-#[derive(Component, Debug)]
+#[derive(Component, Clone, Debug)]
 struct CompF {
     speed: f32,
 }
-#[derive(Component)]
+#[derive(Component, Clone)]
 struct CompDrop;
 impl Drop for CompDrop {
     fn drop(&mut self) {

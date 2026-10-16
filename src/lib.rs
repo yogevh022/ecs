@@ -17,6 +17,6 @@ pub mod prelude {
     pub use crate::event::{Event, EventR, EventW};
     pub use crate::query::{Query, With, Without};
     pub use crate::scheduler::Scheduler;
-    pub use crate::world::{EntityBuilder, World};
+    pub use crate::world::{EntityBuilder, EntityTemplate, World};
     pub use ecs_macros::{Component, Event};
 }

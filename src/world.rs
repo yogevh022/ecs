@@ -12,6 +12,21 @@ static NEXT_WORLD_ID: AtomicUsize = AtomicUsize::new(1);
 pub(crate) struct ComponentBox {
     pub id: ComponentId,
     pub data: Box<dyn Any>,
+    clone_fn: fn(&dyn Any) -> Box<dyn Any>,
+}
+
+impl Clone for ComponentBox {
+    fn clone(&self) -> Self {
+        Self {
+            id: self.id,
+            data: (self.clone_fn)(self.data.as_ref()),
+            clone_fn: self.clone_fn,
+        }
+    }
+}
+
+fn clone_component<T: Component>(data: &dyn Any) -> Box<dyn Any> {
+    Box::new(data.downcast_ref::<T>().unwrap().clone())
 }
 
 pub struct EntityBuilder<'e> {
@@ -31,22 +46,63 @@ impl<'e> EntityBuilder<'e> {
         self.components.push(ComponentBox {
             id: self.ecs.components.id_of::<T>(),
             data: Box::new(component),
+            clone_fn: clone_component::<T>,
         });
         self
     }
 
+    pub fn build(self) -> EntityTemplate {
+        EntityTemplate::from_boxes(self.components)
+    }
+
     pub fn spawn(self) -> Entity {
-        self.ecs.spawn_with_components(self.components)
+        let EntityBuilder { ecs, components } = self;
+        ecs.spawn(EntityTemplate::from_boxes(components))
     }
 }
 
-struct EntityPrefab {
+pub struct EntityTemplate {
+    key: ArchetypeKey,
     components: Vec<ComponentBox>,
 }
 
-impl EntityPrefab {
-    pub fn from(components: Vec<ComponentBox>) -> Self {
-        Self { components }
+impl EntityTemplate {
+    fn from_boxes(components: Vec<ComponentBox>) -> Self {
+        let mut key = ArchetypeKey::EMPTY;
+        for component in &components {
+            key = key.with_id(component.id);
+        }
+        debug_assert_eq!(
+            key.component_count(),
+            components.len(),
+            "Duplicate components found"
+        );
+        Self { key, components }
+    }
+}
+
+impl Clone for EntityTemplate {
+    fn clone(&self) -> Self {
+        Self {
+            key: self.key,
+            components: self.components.clone(),
+        }
+    }
+}
+
+pub trait SpawnTemplate {
+    fn spawn_into(self, world: &mut World) -> Entity;
+}
+
+impl SpawnTemplate for EntityTemplate {
+    fn spawn_into(self, world: &mut World) -> Entity {
+        world.spawn_with_components(self.key, self.components)
+    }
+}
+
+impl SpawnTemplate for &EntityTemplate {
+    fn spawn_into(self, world: &mut World) -> Entity {
+        world.spawn_with_components(self.key, self.components.clone())
     }
 }
 
@@ -97,12 +153,16 @@ impl World {
         self.events.register::<E>();
     }
 
+    pub fn register_resource<T: Any>(&mut self, resource: T) {
+        self.resources.register(resource);
+    }
+
     pub fn new_entity(&'_ mut self) -> EntityBuilder<'_> {
         EntityBuilder::new(self)
     }
 
-    pub fn spawn_prefab(&mut self, prefab: &EntityPrefab) -> Entity {
-        todo!()
+    pub fn spawn(&mut self, template: impl SpawnTemplate) -> Entity {
+        template.spawn_into(self)
     }
 
     pub fn add_component<T: Component>(&mut self, entity: Entity, component: T) {
@@ -182,17 +242,11 @@ impl World {
     }
 
     // --- private ---
-    fn spawn_with_components(&mut self, component_boxes: Vec<ComponentBox>) -> Entity {
-        let mut key = ArchetypeKey::EMPTY;
-        for comp_box in &component_boxes {
-            key = key.with_id(comp_box.id);
-        }
-        debug_assert_eq!(
-            key.component_count(),
-            component_boxes.len(),
-            "Duplicate components found"
-        );
-
+    fn spawn_with_components(
+        &mut self,
+        key: ArchetypeKey,
+        component_boxes: Vec<ComponentBox>,
+    ) -> Entity {
         let entity = self.entities.alloc();
         let (arch_id, row) = if let Some(arch_id) = self.archetypes.id_of(key) {
             let arch = self.archetypes.get_by_id_mut(arch_id).unwrap();
@@ -261,6 +315,7 @@ mod tests {
     use crate::component::Component;
     use crate::event::Event;
 
+    #[derive(Clone)]
     struct Marker;
     impl Component for Marker {}
 
@@ -292,11 +347,11 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "add a resource after build")]
-    fn add_resource_after_build_panics() {
+    #[should_panic(expected = "register a resource after build")]
+    fn register_resource_after_build_panics() {
         let mut world = World::new();
         world.build();
-        world.resources.add_resource(1u32);
+        world.register_resource(1u32);
     }
 
     #[test]
@@ -306,5 +361,34 @@ mod tests {
         world.register_event::<Boom>();
         world.build();
         world.events.add_writer::<Boom>();
+    }
+
+    #[derive(Clone)]
+    struct Hp(u32);
+    impl Component for Hp {}
+
+    #[derive(Clone)]
+    struct Speed(u32);
+    impl Component for Speed {}
+
+    #[test]
+    fn template_spawns_twice_with_the_same_values() {
+        let mut world = World::new();
+        world.register_component::<Hp>();
+        world.register_component::<Speed>();
+        let template = world.new_entity().with(Hp(3)).with(Speed(7)).build();
+
+        world.spawn(&template);
+        world.spawn(&template);
+
+        let mut values: Vec<_> = world
+            .query::<(Hp, Speed)>()
+            .map(|(hp, speed)| (hp.0, speed.0))
+            .collect();
+        values.sort();
+        assert_eq!(values, vec![(3, 7), (3, 7)]);
+
+        world.spawn(&template);
+        assert_eq!(world.query::<(Hp, Speed)>().count(), 3);
     }
 }

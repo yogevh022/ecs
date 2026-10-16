@@ -104,8 +104,8 @@ impl Resources {
         self.built = true;
     }
 
-    pub(crate) fn add_resource<T: Any>(&mut self, resource: T) {
-        assert!(!self.built, "Attempted to add a resource after build");
+    pub(crate) fn register<T: Any>(&mut self, resource: T) {
+        assert!(!self.built, "Attempted to register a resource after build");
         let id = TypeId::of::<T>();
         let None = self.ids.insert(id, self.storage.len() as ResourceId) else {
             panic!("Resource already exists: {:?}", std::any::type_name::<T>())
@@ -131,7 +131,7 @@ mod tests {
     #[test]
     fn fetch_casts_the_erased_pointer() {
         let mut world = World::new();
-        world.resources.add_resource(7u32);
+        world.register_resource(7u32);
         let mut write = ResW::<u32>::init(&mut world);
         let mut read = ResR::<u32>::init(&mut world);
 
@@ -141,8 +141,8 @@ mod tests {
         ResR::<u32>::add_dependencies(&mut read_deps, &mut read);
         assert!(!write_deps.is_disjoint(&read_deps));
 
-        world.resources.add_resource(1u8);
-        world.resources.add_resource(2u16);
+        world.register_resource(1u8);
+        world.register_resource(2u16);
         let world_ptr = &mut world as *mut World;
         *ResW::<u32>::fetch(world_ptr, &mut write) = 11;
         assert_eq!(*ResR::<u32>::fetch(world_ptr, &mut read), 11);
