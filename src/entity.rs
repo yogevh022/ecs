@@ -2,15 +2,16 @@ use crate::archetype::ArchetypeId;
 use std::fmt::{Debug, Display};
 
 pub(crate) type EntityId = u32;
+pub(crate) type EntityGeneration = u32;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub struct Entity {
     pub(crate) id: EntityId,
-    pub(crate) generation: u32,
+    pub(crate) generation: EntityGeneration,
 }
 
 impl Entity {
-    pub(crate) fn new(id: EntityId, generation: u32) -> Self {
+    pub(crate) fn new(id: EntityId, generation: EntityGeneration) -> Self {
         Self { id, generation }
     }
 }
@@ -61,7 +62,7 @@ impl EntityAllocator {
 #[derive(Debug, Copy, Clone)]
 pub(crate) struct SparseEntity {
     pub archetype_id: ArchetypeId,
-    pub generation: u32,
+    pub generation: EntityGeneration,
     pub row: u32,
 }
 
