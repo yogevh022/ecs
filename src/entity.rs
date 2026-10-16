@@ -28,37 +28,6 @@ impl Debug for Entity {
     }
 }
 
-struct EntityAllocator {
-    counter: u32,
-    generation: u32,
-    free_list: Vec<EntityId>,
-}
-
-impl EntityAllocator {
-    fn new() -> Self {
-        Self {
-            counter: 1,
-            generation: 0,
-            free_list: Vec::new(),
-        }
-    }
-
-    fn alloc(&mut self) -> Entity {
-        if let Some(id) = self.free_list.pop() {
-            self.generation += 1;
-            Entity::new(id, self.generation)
-        } else {
-            let id = self.counter;
-            self.counter += 1;
-            Entity::new(id, self.generation)
-        }
-    }
-
-    fn free(&mut self, entity: Entity) {
-        self.free_list.push(entity.id);
-    }
-}
-
 #[derive(Debug, Copy, Clone)]
 pub(crate) struct SparseEntity {
     pub archetype_id: ArchetypeId,
@@ -67,7 +36,8 @@ pub(crate) struct SparseEntity {
 }
 
 pub struct Entities {
-    allocator: EntityAllocator,
+    next_id: EntityId,
+    free_list: Vec<EntityId>,
     live: Vec<Entity>,
     sparse: Vec<Option<SparseEntity>>,
 }
@@ -75,14 +45,40 @@ pub struct Entities {
 impl Entities {
     pub fn new() -> Self {
         Self {
-            allocator: EntityAllocator::new(),
+            next_id: 1,
+            free_list: Vec::new(),
             live: Vec::new(),
             sparse: vec![None], // reserved 0 for null entity
         }
     }
 
     pub(crate) fn alloc(&mut self) -> Entity {
-        self.allocator.alloc()
+        if let Some(id) = self.free_list.pop() {
+            let generation = match self.sparse.get(id as usize).and_then(Option::as_ref) {
+                Some(location) => location.generation,
+                None => panic!("Entity {id} does not exist in ECS"),
+            };
+            Entity::new(id, generation)
+        } else {
+            let id = self.next_id;
+            self.next_id += 1;
+            Entity::new(id, 0)
+        }
+    }
+
+    pub(crate) fn free(&mut self, entity: Entity) {
+        let Some(location) = self
+            .sparse
+            .get_mut(entity.id as usize)
+            .and_then(Option::as_mut)
+        else {
+            panic!("Entity {} does not exist in ECS", entity.id);
+        };
+        if location.generation != entity.generation {
+            panic!("Entity {} does not exist in ECS", entity.id);
+        }
+        location.generation = location.generation.wrapping_add(1);
+        self.free_list.push(entity.id);
     }
 
     pub(crate) fn insert(&mut self, entity: Entity, location: SparseEntity) {
@@ -119,5 +115,40 @@ impl Entities {
                 .as_mut()
                 .unwrap_unchecked()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn insert(entities: &mut Entities, entity: Entity, row: u32) {
+        entities.insert(
+            entity,
+            SparseEntity {
+                archetype_id: 0,
+                generation: entity.generation,
+                row,
+            },
+        );
+    }
+
+    #[test]
+    fn recycled_id_bumps_only_its_generation() {
+        let mut entities = Entities::new();
+        let first = entities.alloc();
+        insert(&mut entities, first, 0);
+        let second = entities.alloc();
+        insert(&mut entities, second, 1);
+
+        assert_eq!(first.generation, 0);
+        assert_eq!(second.generation, 0);
+
+        entities.free(first);
+        let recycled = entities.alloc();
+
+        assert_eq!(recycled.id, first.id);
+        assert_eq!(recycled.generation, 1);
+        assert_eq!(second.generation, 0);
     }
 }
