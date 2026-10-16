@@ -1,10 +1,10 @@
 use crate::system::{IntoSystem, SystemDependencies, SystemFn};
-use crate::world::World;
+use crate::world::{World, WorldId};
 use rayon::iter::ParallelIterator;
 use rayon::prelude::IntoParallelRefMutIterator;
 
 pub struct Scheduler {
-    world_id: usize,
+    world_id: WorldId,
     dispatch_groups: Vec<DispatchGroup>,
 }
 

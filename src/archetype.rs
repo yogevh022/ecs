@@ -19,7 +19,7 @@ impl ArchetypeKey {
 
     #[inline]
     fn bit_index(comp_id: ComponentId) -> (usize, usize) {
-        let component_bit = comp_id - 1;
+        let component_bit = comp_id as usize - 1;
         (
             component_bit / ARCHETYPE_KEY_WORD_BITS,
             component_bit % ARCHETYPE_KEY_WORD_BITS,

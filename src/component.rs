@@ -6,21 +6,21 @@ use std::mem::MaybeUninit;
 pub(crate) const ARCHETYPE_KEY_WORD_BITS: usize = usize::BITS as usize;
 pub(crate) const ARCHETYPE_KEY_WORDS: usize = 4;
 
-pub type ComponentId = usize;
+pub type ComponentId = u32;
 
 pub trait Component: Sized + Clone + 'static {}
 
 pub struct Components {
     ids: FxHashMap<TypeId, ComponentId>,
     storage: Vec<BlobVecMeta>,
-    id_counter: usize,
+    next_id: ComponentId,
     built: bool,
 }
 
 impl Components {
     pub fn new() -> Self {
         Self {
-            id_counter: 1,
+            next_id: 1,
             ids: FxHashMap::default(),
             storage: vec![unsafe { MaybeUninit::uninit().assume_init() }], // 0 item is null
             built: false,
@@ -52,13 +52,13 @@ impl Components {
     }
 
     pub(crate) fn storage_meta_of_id(&self, id: ComponentId) -> &BlobVecMeta {
-        &self.storage[id]
+        &self.storage[id as usize]
     }
 
     // --- private ---
     fn next_id(&mut self) -> ComponentId {
-        let id = self.id_counter;
-        self.id_counter += 1;
+        let id = self.next_id;
+        self.next_id += 1;
         id
     }
 }

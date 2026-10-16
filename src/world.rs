@@ -4,10 +4,12 @@ use crate::entity::{Entities, Entity, SparseEntity};
 use crate::event::{Event, Events};
 use crate::query::{Query, QueryFilter, QueryState, Queryable};
 use std::any::Any;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 use crate::resource::Resources;
 
-static NEXT_WORLD_ID: AtomicUsize = AtomicUsize::new(1);
+static NEXT_WORLD_ID: AtomicU32 = AtomicU32::new(1);
+
+pub(crate) type WorldId = u32;
 
 pub(crate) struct ComponentBox {
     pub id: ComponentId,
@@ -107,7 +109,7 @@ impl SpawnTemplate for &EntityTemplate {
 }
 
 pub struct World {
-    id: usize,
+    id: WorldId,
     built: bool,
     entities: Entities,
     pub(crate) components: Components,
@@ -141,7 +143,7 @@ impl World {
         self.built
     }
 
-    pub(crate) fn id(&self) -> usize {
+    pub(crate) fn id(&self) -> WorldId {
         self.id
     }
 
